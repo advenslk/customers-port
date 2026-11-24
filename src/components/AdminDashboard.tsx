@@ -36,6 +36,7 @@ import {
   formatFailureReason,
   statusColorClass,
 } from '../lib/api';
+import { Tilt3DCard } from './Tilt3DCard';
 
 type AdminTab =
   | 'overview'
@@ -352,42 +353,46 @@ export function AdminDashboard({ user, onOpenInvoice, onCatalogChanged, onLogout
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5 hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
+                <Tilt3DCard maxTilt={6} className="bg-[#0D0D11] border border-white/10 rounded-xl p-5">
                   <div className="text-xs text-zinc-400">Total Customers</div>
                   <div className="font-display text-3xl font-bold text-white tabular-nums mt-1.5">{overview?.stats?.total_customers ?? 0}</div>
-                </div>
-                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5 hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
+                </Tilt3DCard>
+                <Tilt3DCard maxTilt={6} className="bg-[#0D0D11] border border-white/10 rounded-xl p-5">
                   <div className="text-xs text-zinc-400">Total Orders</div>
                   <div className="font-display text-3xl font-bold text-white tabular-nums mt-1.5">{overview?.stats?.total_orders ?? 0}</div>
-                </div>
-                <div className="hx-featured-card rounded-xl p-5 text-white hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
-                  <div className="text-xs text-orange-100/80">Total Verified Revenue</div>
-                  <div className="font-display text-2xl md:text-3xl font-bold font-mono tabular-nums mt-1.5">
+                </Tilt3DCard>
+                <Tilt3DCard
+                  maxTilt={6}
+                  glowColor="rgba(255, 255, 255, 0.2)"
+                  className="hx-featured-card rounded-xl p-5 text-white border border-orange-400/30"
+                >
+                  <div className="text-xs text-orange-100/85">Total Verified Revenue</div>
+                  <div className="font-display text-2xl md:text-3xl font-bold tabular-nums mt-1.5">
                     {formatCurrency(overview?.stats?.total_revenue_cents ?? 0)}
                   </div>
-                </div>
-                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5 hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
+                </Tilt3DCard>
+                <Tilt3DCard maxTilt={6} className="bg-[#0D0D11] border border-white/10 rounded-xl p-5">
                   <div className="text-xs text-zinc-400">Monthly Revenue</div>
-                  <div className="font-display text-2xl md:text-3xl font-bold text-emerald-400 font-mono tabular-nums mt-1.5">
+                  <div className="font-display text-2xl md:text-3xl font-bold text-emerald-400 tabular-nums mt-1.5">
                     {formatCurrency(overview?.stats?.monthly_revenue_cents ?? 0)}
                   </div>
-                </div>
-                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5 hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
+                </Tilt3DCard>
+                <Tilt3DCard maxTilt={6} className="bg-[#0D0D11] border border-white/10 rounded-xl p-5">
                   <div className="text-xs text-zinc-400">Pending Payments</div>
                   <div className="font-display text-2xl font-bold text-orange-400 tabular-nums mt-1">{overview?.stats?.pending_payments ?? 0}</div>
-                </div>
-                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5 hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
+                </Tilt3DCard>
+                <Tilt3DCard maxTilt={6} className="bg-[#0D0D11] border border-white/10 rounded-xl p-5">
                   <div className="text-xs text-zinc-400">Active / Pending Orders</div>
                   <div className="font-display text-2xl font-bold text-white tabular-nums mt-1">{overview?.stats?.pending_orders ?? 0}</div>
-                </div>
-                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5 hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
+                </Tilt3DCard>
+                <Tilt3DCard maxTilt={6} className="bg-[#0D0D11] border border-white/10 rounded-xl p-5">
                   <div className="text-xs text-zinc-400">Active Services</div>
                   <div className="font-display text-2xl font-bold text-emerald-400 tabular-nums mt-1">{overview?.stats?.active_services ?? 0}</div>
-                </div>
-                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5 hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
+                </Tilt3DCard>
+                <Tilt3DCard maxTilt={6} className="bg-[#0D0D11] border border-white/10 rounded-xl p-5">
                   <div className="text-xs text-zinc-400">Open Support Tickets</div>
                   <div className="font-display text-2xl font-bold text-white tabular-nums mt-1">{overview?.stats?.open_tickets ?? 0}</div>
-                </div>
+                </Tilt3DCard>
               </div>
 
               {/* Revenue Analytics & Recent Transactions */}

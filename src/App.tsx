@@ -528,59 +528,66 @@ export default function App() {
                 </div>
               </section>
 
-              {/* 4-CARD 3D ARCHITECTURAL CAPABILITY STRIP (Matching Reference 1 sculptures + glowing amber featured card) */}
+              {/* 4-CARD 3D ARCHITECTURAL CAPABILITY STRIP */}
               <section className="max-w-7xl mx-auto px-6 py-16">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                  <Tilt3DCard className="bg-[#0D0D11] border border-white/10 rounded-2xl p-6">
-                    <div className="flex flex-col justify-between h-full space-y-5">
-                      <Sculptural3DArrow className="w-16 h-16" />
-                      <div className="space-y-2">
-                        <h3 className="font-display text-base font-bold text-white">Dedicated Provisioning</h3>
-                        <p className="text-xs text-zinc-400 leading-relaxed">
-                          Follow every order smoothly from initial submission through payment verification to live service activation.
-                        </p>
-                      </div>
-                    </div>
-                  </Tilt3DCard>
-
-                  <Tilt3DCard className="bg-[#0D0D11] border border-white/10 rounded-2xl p-6">
-                    <div className="flex flex-col justify-between h-full space-y-5">
-                      <Sculptural3DBust className="w-16 h-16" />
-                      <div className="space-y-2">
-                        <h3 className="font-display text-base font-bold text-white">Instant PDF Billing</h3>
-                        <p className="text-xs text-zinc-400 leading-relaxed">
-                          Unique numbered invoices are issued the moment you order, complete with automatic printable PDF downloads.
-                        </p>
-                      </div>
-                    </div>
-                  </Tilt3DCard>
-
-                  <Tilt3DCard className="bg-[#0D0D11] border border-white/10 rounded-2xl p-6">
-                    <div className="flex flex-col justify-between h-full space-y-5">
-                      <Sculptural3DGear className="w-16 h-16" />
-                      <div className="space-y-2">
-                        <h3 className="font-display text-base font-bold text-white">Verified Payment Settlement</h3>
-                        <p className="text-xs text-zinc-400 leading-relaxed">
-                          Bank wire receipts and card payments are carefully verified before any invoice transitions to Paid.
-                        </p>
-                      </div>
-                    </div>
-                  </Tilt3DCard>
-
-                  <Tilt3DCard
-                    className="hx-featured-card rounded-2xl p-6 text-white border border-orange-400/30"
-                    glowColor="rgba(255, 255, 255, 0.22)"
-                  >
-                    <div className="flex flex-col justify-between h-full space-y-5">
-                      <Sculptural3DCheck className="w-16 h-16" />
-                      <div className="space-y-2">
-                        <h3 className="font-display text-base font-bold">Private Client Protection</h3>
-                        <p className="text-xs text-orange-100/90 leading-relaxed">
-                          Role-isolated accounts, authenticator app verification, and strict privacy keep every client workspace protected.
-                        </p>
-                      </div>
-                    </div>
-                  </Tilt3DCard>
+                  {[
+                    {
+                      icon: <Sculptural3DArrow className="w-16 h-16" />,
+                      title: 'Dedicated Provisioning',
+                      body: 'Follow every order smoothly from initial submission through payment verification to live service activation.',
+                      featured: false,
+                    },
+                    {
+                      icon: <Sculptural3DBust className="w-16 h-16" />,
+                      title: 'Instant PDF Billing',
+                      body: 'Unique numbered invoices are issued the moment you order, complete with automatic printable PDF downloads.',
+                      featured: false,
+                    },
+                    {
+                      icon: <Sculptural3DGear className="w-16 h-16" />,
+                      title: 'Verified Payment Settlement',
+                      body: 'Bank wire receipts and card payments are carefully verified before any invoice transitions to Paid.',
+                      featured: false,
+                    },
+                    {
+                      icon: <Sculptural3DCheck className="w-16 h-16" />,
+                      title: 'Private Client Protection',
+                      body: 'Role-isolated accounts, authenticator app verification, and strict privacy keep every client workspace protected.',
+                      featured: true,
+                    },
+                  ].map((item, idx) => (
+                    <motion.div
+                      key={item.title}
+                      initial={{ opacity: 0, y: 18 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true, amount: 0.2 }}
+                      transition={{ duration: 0.35, delay: idx * 0.06 }}
+                      className="h-full"
+                    >
+                      <Tilt3DCard
+                        maxTilt={10}
+                        glowColor={item.featured ? 'rgba(255, 255, 255, 0.24)' : 'rgba(255, 107, 44, 0.24)'}
+                        className={
+                          item.featured
+                            ? 'hx-featured-card rounded-2xl p-6 text-white border border-orange-400/35'
+                            : 'bg-[#0D0D11] border border-white/10 rounded-2xl p-6'
+                        }
+                      >
+                        <div className="flex flex-col justify-between h-full space-y-5">
+                          <div style={{ transform: 'translateZ(30px)' }} className="w-fit drop-shadow-[0_14px_20px_rgba(0,0,0,0.65)]">
+                            {item.icon}
+                          </div>
+                          <div className="space-y-2" style={{ transform: 'translateZ(12px)' }}>
+                            <h3 className="font-display text-base font-bold text-white">{item.title}</h3>
+                            <p className={`text-xs leading-relaxed ${item.featured ? 'text-orange-100/90' : 'text-zinc-400'}`}>
+                              {item.body}
+                            </p>
+                          </div>
+                        </div>
+                      </Tilt3DCard>
+                    </motion.div>
+                  ))}
                 </div>
               </section>
 
@@ -588,7 +595,7 @@ export default function App() {
               <section id="catalog" className="max-w-7xl mx-auto px-6 py-12 border-t border-white/10">
                 <div className="flex flex-wrap items-end justify-between gap-6 mb-10">
                   <div>
-                    <div className="text-xs font-medium text-orange-400 mb-2">Service &amp; Infrastructure Catalog</div>
+                    <div className="text-xs font-medium text-orange-400 mb-2">Service &amp; Solution Catalog</div>
                     <h2 className="font-display text-3xl font-bold text-white tracking-tight">Select Your Enterprise Stack</h2>
                   </div>
                   <div className="flex flex-wrap gap-1 p-1 bg-[#0D0D11] border border-white/10 rounded-xl">
@@ -615,72 +622,110 @@ export default function App() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {filteredProducts.map((product) => (
-                    <Tilt3DCard
-                      key={product.id}
-                      maxTilt={4}
-                      className={`rounded-2xl p-6 md:p-8 border ${
-                        product.featured
-                          ? 'bg-gradient-to-b from-[#170C07] to-[#0D0D11] border-orange-500/35'
-                          : 'bg-[#0D0D11] border-white/10'
-                      }`}
-                    >
-                      <div className="flex flex-col justify-between h-full space-y-6">
-                        <div className="space-y-4">
-                          <div>
-                            <div className="text-xs text-orange-400 font-medium">
-                              {categories.find((c) => c.id === product.category_id)?.name || 'Enterprise Service'}
-                            </div>
-                            <h3 className="font-display text-2xl font-bold text-white mt-1">{product.name}</h3>
-                            <p className="text-sm text-zinc-400 mt-1.5 leading-relaxed">{product.description}</p>
-                          </div>
-                          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-zinc-300 pt-2">
-                            {product.features.map((feat, idx) => (
-                              <li key={idx} className="flex items-center gap-2">
-                                <span className="text-orange-400 font-mono">·</span>
-                                <span>{feat}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
+                  {filteredProducts.map((product, idx) => {
+                    const catName = categories.find((c) => c.id === product.category_id)?.name || 'Enterprise Service';
+                    const lowerCat = catName.toLowerCase();
+                    const catSculpture = lowerCat.includes('security') ? (
+                      <Sculptural3DCheck className="w-12 h-12" />
+                    ) : lowerCat.includes('ai') || lowerCat.includes('automation') ? (
+                      <Sculptural3DBust className="w-12 h-12" />
+                    ) : lowerCat.includes('engineering') ? (
+                      <Sculptural3DGear className="w-12 h-12" />
+                    ) : (
+                      <Sculptural3DArrow className="w-12 h-12" />
+                    );
 
-                        <div className="space-y-2.5 pt-4 border-t border-white/10">
-                          <div className="text-xs font-semibold text-zinc-500 tracking-wide">Available Packages</div>
-                          {product.packages.map((pkg) => {
-                            const isSelected = selectedProductId === product.id && selectedPackageId === pkg.id;
-                            return (
-                              <div
-                                key={pkg.id}
-                                className={`flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl border transition-colors ${
-                                  isSelected
-                                    ? 'border-orange-500 bg-orange-500/10'
-                                    : 'border-white/10 bg-[#070709] hover:border-white/20'
-                                }`}
-                              >
+                    const formatBillingCycle = (cycle: string) => {
+                      const map: Record<string, string> = {
+                        monthly: 'Monthly Plan',
+                        quarterly: 'Quarterly Plan',
+                        annual: 'Annual Plan',
+                        one_time: 'One-Time Plan',
+                      };
+                      return map[cycle] || cycle.replace(/_/g, ' ');
+                    };
+
+                    return (
+                      <motion.div
+                        key={product.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        viewport={{ once: true, amount: 0.12 }}
+                        transition={{ duration: 0.35, delay: idx * 0.06 }}
+                        className="h-full"
+                      >
+                        <Tilt3DCard
+                          maxTilt={6}
+                          className={`rounded-2xl p-6 md:p-8 border ${
+                            product.featured
+                              ? 'bg-gradient-to-b from-[#170C07] to-[#0D0D11] border-orange-500/35'
+                              : 'bg-[#0D0D11] border-white/10'
+                          }`}
+                        >
+                          <div className="flex flex-col justify-between h-full space-y-6">
+                            <div className="space-y-4">
+                              <div className="flex items-start justify-between gap-4">
                                 <div>
-                                  <div className="text-sm font-semibold text-white">{pkg.name}</div>
-                                  <div className="text-xs text-zinc-500 capitalize">
-                                    {pkg.billing_cycle.replace('_', ' ')} · {pkg.duration_days} days
-                                  </div>
+                                  <div className="text-xs text-orange-400 font-medium">{catName}</div>
+                                  <h3 className="font-display text-2xl font-bold text-white mt-1">{product.name}</h3>
                                 </div>
-                                <div className="flex items-center gap-3">
-                                  <span className="font-mono text-base font-bold text-white tabular-nums">
-                                    {formatCurrency(pkg.price_cents, pkg.currency)}
-                                  </span>
-                                  <button
-                                    onClick={() => handleSelectPackageAndScroll(product.id, pkg.id)}
-                                    className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-orange-600 hover:bg-orange-500 text-white whitespace-nowrap transition-colors"
-                                  >
-                                    Order Tier
-                                  </button>
+                                <div
+                                  style={{ transform: 'translateZ(28px)' }}
+                                  className="shrink-0 drop-shadow-[0_12px_18px_rgba(0,0,0,0.6)]"
+                                >
+                                  {catSculpture}
                                 </div>
                               </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </Tilt3DCard>
-                  ))}
+                              <p className="text-sm text-zinc-400 leading-relaxed">{product.description}</p>
+                              <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs text-zinc-300 pt-1">
+                                {product.features.map((feat, fIdx) => (
+                                  <li key={fIdx} className="flex items-center gap-2.5">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0 shadow-[0_0_8px_rgba(255,107,44,0.8)]" />
+                                    <span>{feat}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+
+                            <div className="space-y-2.5 pt-4 border-t border-white/10">
+                              <div className="text-xs font-semibold text-zinc-400">Available Packages</div>
+                              {product.packages.map((pkg) => {
+                                const isSelected = selectedProductId === product.id && selectedPackageId === pkg.id;
+                                return (
+                                  <div
+                                    key={pkg.id}
+                                    className={`flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl border transition-all duration-300 hover:-translate-y-0.5 ${
+                                      isSelected
+                                        ? 'border-orange-500 bg-orange-500/10 shadow-[0_8px_24px_-8px_rgba(234,88,12,0.35)]'
+                                        : 'border-white/10 bg-[#070709]/90 hover:border-orange-500/40 hover:bg-[#101016]'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="text-sm font-semibold text-white">{pkg.name}</div>
+                                      <div className="text-xs text-zinc-400 mt-0.5">
+                                        {formatBillingCycle(pkg.billing_cycle)} · {pkg.duration_days} days
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-3.5">
+                                      <span className="font-display text-lg font-bold text-white tabular-nums">
+                                        {formatCurrency(pkg.price_cents, pkg.currency)}
+                                      </span>
+                                      <button
+                                        onClick={() => handleSelectPackageAndScroll(product.id, pkg.id)}
+                                        className="px-4 py-2 text-xs font-semibold rounded-lg bg-orange-600 hover:bg-orange-500 text-white whitespace-nowrap transition-all duration-200 hover:shadow-[0_6px_18px_-4px_rgba(234,88,12,0.5)]"
+                                      >
+                                        Order Tier
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </Tilt3DCard>
+                      </motion.div>
+                    );
+                  })}
                 </div>
               </section>
 

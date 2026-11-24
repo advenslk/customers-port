@@ -129,10 +129,10 @@ export function seedInitialData(): void {
     const insertCat = db.prepare(
       'INSERT INTO categories (name, slug, description, sort_order) VALUES (?, ?, ?, ?)'
     );
-    const c1 = insertCat.run('Cloud & Dedicated Nodes', 'cloud-infrastructure', 'High-throughput bare metal and isolated cloud compute clusters.', 1).lastInsertRowid;
-    const c2 = insertCat.run('Enterprise AI Systems', 'enterprise-ai', 'Private LLM deployment, RAG pipelines, and workflow orchestration.', 2).lastInsertRowid;
-    const c3 = insertCat.run('Security & Zero-Trust', 'security-compliance', '24/7 SOC monitoring, WAF edge hardening, and DDoS mitigation.', 3).lastInsertRowid;
-    const c4 = insertCat.run('Custom Engineering', 'custom-engineering', 'Dedicated full-stack engineering and portal architecture retainers.', 4).lastInsertRowid;
+    const c1 = insertCat.run('Dedicated Cloud Hosting', 'cloud-infrastructure', 'High-speed private cloud environments engineered for business reliability.', 1).lastInsertRowid;
+    const c2 = insertCat.run('Enterprise AI Solutions', 'enterprise-ai', 'Custom private intelligence assistants and automated business workflows.', 2).lastInsertRowid;
+    const c3 = insertCat.run('Security & Protection', 'security-compliance', 'Continuous threat defense, account protection, and round-the-clock monitoring.', 3).lastInsertRowid;
+    const c4 = insertCat.run('Custom Engineering', 'custom-engineering', 'Dedicated senior engineering teams for bespoke digital platforms.', 4).lastInsertRowid;
 
     const insertProd = db.prepare(
       'INSERT INTO products (category_id, name, slug, tagline, description, features_json, is_active, featured) VALUES (?, ?, ?, ?, ?, ?, 1, ?)'
@@ -144,55 +144,55 @@ export function seedInitialData(): void {
     // Product 1
     const p1 = insertProd.run(
       c1,
-      'HelzerX Core Cluster',
+      'HelzerX Core Infrastructure',
       'helzerx-core-cluster',
-      'Dedicated NVMe compute cluster with 10Gbps unmetered uplink',
-      'Isolated enterprise compute cluster engineered for mission-critical APIs, fintech workloads, and low-latency edge deployments with automated daily snapshots.',
-      JSON.stringify(['99.99% SLA Uptime Guarantee', 'Anycast DDoS Scrubbing Included', 'Private VPC & WireGuard Mesh', '24/7 Priority NOC Engineering']),
+      'Private dedicated cloud environments built for speed and uptime',
+      'High-availability business hosting designed for mission-critical applications, global storefronts, and seamless daily backups.',
+      JSON.stringify(['Guaranteed Uptime Protection', 'Always-On Traffic Protection', 'Private Encrypted Networking', 'Priority Engineering Support']),
       1
     ).lastInsertRowid;
-    insertPkg.run(p1, 'Starter Node (8 vCPU / 32GB)', 'monthly', 30, 29000, 'USD', JSON.stringify(['8 Dedicated vCPU', '32 GB ECC RAM', '640 GB Gen4 NVMe', '10 Gbps Port']));
-    insertPkg.run(p1, 'Growth Cluster (16 vCPU / 64GB)', 'monthly', 30, 58000, 'USD', JSON.stringify(['16 Dedicated vCPU', '64 GB ECC RAM', '1.2 TB Gen4 NVMe', 'Dedicated IPv4 /29']));
-    insertPkg.run(p1, 'Enterprise HA (Annual)', 'annual', 365, 590000, 'USD', JSON.stringify(['32 Dedicated vCPU', '128 GB ECC RAM', 'Multi-Zone Replication', '2 Months Free Included']));
+    insertPkg.run(p1, 'Essential Cloud Tier', 'monthly', 30, 29000, 'USD', JSON.stringify(['Dedicated Capacity', 'Automated Daily Backups', 'Global Speed Routing', 'Priority Support']));
+    insertPkg.run(p1, 'Business Growth Tier', 'monthly', 30, 58000, 'USD', JSON.stringify(['Expanded Team Capacity', 'Dedicated IP Included', 'Multi-Region Redundancy']));
+    insertPkg.run(p1, 'Enterprise Annual Plan', 'annual', 365, 590000, 'USD', JSON.stringify(['Maximum Performance Tier', 'Dedicated Account Lead', 'Two Months Savings Included']));
 
     // Product 2
     const p2 = insertProd.run(
       c2,
-      'HelzerX NeuralOps Engine',
+      'HelzerX NeuralOps Suite',
       'helzerx-neuralops-engine',
-      'Private enterprise AI automation & vector retrieval stack',
-      'Deploy sovereign AI agents, internal knowledge search, and automated document workflows on dedicated GPU nodes with full audit logging and RBAC.',
-      JSON.stringify(['Zero Third-Party Data Retention', 'Role-Based Prompt Governance', 'SOC2-Ready Audit Trails', 'Custom Webhook & ERP Connectors']),
+      'Private company intelligence and workflow automation',
+      'Deploy private intelligent assistants, instant company knowledge search, and automated document workflows tailored to your organization.',
+      JSON.stringify(['Strict Private Data Ownership', 'Team Access Permissions', 'Complete Activity Records', 'Custom Business Integrations']),
       1
     ).lastInsertRowid;
-    insertPkg.run(p2, 'Team Automation Suite', 'monthly', 30, 75000, 'USD', JSON.stringify(['Up to 25 Internal Users', '500K Indexed Vectors', '5 Automated Pipelines']));
-    insertPkg.run(p2, 'Enterprise Sovereign Stack', 'quarterly', 90, 210000, 'USD', JSON.stringify(['Unlimited Seats', 'Dedicated H100 Slice', 'Custom Fine-Tuning', 'Dedicated Solutions Architect']));
+    insertPkg.run(p2, 'Team Automation Suite', 'monthly', 30, 75000, 'USD', JSON.stringify(['Up to 25 Team Members', 'Private Knowledge Library', 'Five Automated Workflows']));
+    insertPkg.run(p2, 'Enterprise Private Suite', 'quarterly', 90, 210000, 'USD', JSON.stringify(['Unlimited Team Seats', 'Dedicated Private Capacity', 'Tailored Company Setup', 'Solutions Specialist Assigned']));
 
     // Product 3
     const p3 = insertProd.run(
       c3,
-      'HelzerX Sentinel Shield',
+      'HelzerX Sentinel Protection',
       'helzerx-sentinel-shield',
-      'Managed L7 WAF, threat telemetry & continuous penetration auditing',
-      'Always-on perimeter defense protecting customer portals, payment gateways, and API endpoints against automated abuse, credential stuffing, and zero-day exploits.',
-      JSON.stringify(['Real-Time Edge WAF Rules', 'Automated Bot & Fraud Scoring', 'Weekly Vulnerability Scans', '15-Minute Incident Response SLA']),
+      'Continuous perimeter defense and security oversight',
+      'Round-the-clock protection safeguarding your customer portals, payment checkouts, and online operations against unauthorized access.',
+      JSON.stringify(['Real-Time Threat Blocking', 'Automated Fraud Prevention', 'Scheduled Security Reviews', 'Rapid Incident Response']),
       0
     ).lastInsertRowid;
-    insertPkg.run(p3, 'Perimeter Standard', 'monthly', 30, 34000, 'USD', JSON.stringify(['Up to 5 Protected Domains', '100M Edge Requests/mo', 'Email & Discord Alerts']));
-    insertPkg.run(p3, 'Fortress Enterprise', 'annual', 365, 360000, 'USD', JSON.stringify(['Unlimited Domains', 'Dedicated SOC Analyst', 'Quarterly Red-Team Audit']));
+    insertPkg.run(p3, 'Standard Protection', 'monthly', 30, 34000, 'USD', JSON.stringify(['Up to 5 Business Domains', 'Instant Security Alerts', 'Continuous Threat Shield']));
+    insertPkg.run(p3, 'Fortress Enterprise', 'annual', 365, 360000, 'USD', JSON.stringify(['Unlimited Business Domains', 'Dedicated Security Analyst', 'Quarterly Deep Audits']));
 
     // Product 4
     const p4 = insertProd.run(
       c4,
-      'Dedicated Architecture Retainer',
+      'Dedicated Engineering Partner',
       'dedicated-architecture-retainer',
-      'Bespoke platform engineering, billing automation & systems integration',
-      'Partner directly with HelzerX senior systems engineers to architect custom portals, ERP integrations, high-scale APIs, and automated financial pipelines.',
-      JSON.stringify(['Senior Principal Engineer Assigned', 'Direct Discord & Slack Bridge', 'Weekly Production Releases', 'Full IP Ownership']),
+      'Bespoke platform design, billing systems & software delivery',
+      'Collaborate directly with senior HelzerX specialists to design custom portals, financial workflows, and scalable digital experiences.',
+      JSON.stringify(['Senior Lead Assigned', 'Direct Team Communication', 'Weekly Progress Releases', 'Full Ownership Guaranteed']),
       0
     ).lastInsertRowid;
-    insertPkg.run(p4, 'Sprint Block (40 Hours)', 'one_time', 60, 480000, 'USD', JSON.stringify(['40 Engineering Hours', 'Architecture Blueprint', 'CI/CD Pipeline Setup']));
-    insertPkg.run(p4, 'Quarter Retainer (160 Hours)', 'quarterly', 90, 1680000, 'USD', JSON.stringify(['160 Engineering Hours', 'Priority SLA', 'Dedicated QA & Security Review']));
+    insertPkg.run(p4, 'Focused Delivery Sprint', 'one_time', 60, 480000, 'USD', JSON.stringify(['40 Specialist Hours', 'Solution Blueprint', 'Launch & Handover']));
+    insertPkg.run(p4, 'Quarterly Advisory Retainer', 'quarterly', 90, 1680000, 'USD', JSON.stringify(['160 Specialist Hours', 'Priority Scheduling', 'Quality & Security Assurance']));
   }
 
   // Bootstrap initial Super Admin strictly from environment variables if configured and no admin exists yet

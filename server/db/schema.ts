@@ -498,5 +498,64 @@ export const MIGRATIONS: Migration[] = [
       db.prepare("DELETE FROM coupons WHERE upper(code) IN ('HELZERX15', 'WELCOME50')").run();
     },
   },
+  {
+    version: 3,
+    name: 'polish_catalog_card_copy',
+    up: (db: Database.Database) => {
+      db.prepare("UPDATE categories SET name = 'Dedicated Cloud Hosting', description = 'High-speed private cloud environments engineered for business reliability.' WHERE slug = 'cloud-infrastructure'").run();
+      db.prepare("UPDATE categories SET name = 'Enterprise AI Solutions', description = 'Custom private intelligence assistants and automated business workflows.' WHERE slug = 'enterprise-ai'").run();
+      db.prepare("UPDATE categories SET name = 'Security & Protection', description = 'Continuous threat defense, account protection, and round-the-clock monitoring.' WHERE slug = 'security-compliance'").run();
+      db.prepare("UPDATE categories SET name = 'Custom Engineering', description = 'Dedicated senior engineering teams for bespoke digital platforms.' WHERE slug = 'custom-engineering'").run();
+
+      db.prepare(`
+        UPDATE products
+        SET name = 'HelzerX Core Infrastructure',
+            tagline = 'Private dedicated cloud environments built for speed and uptime',
+            description = 'High-availability business hosting designed for mission-critical applications, global storefronts, and seamless daily backups.',
+            features_json = ?
+        WHERE slug = 'helzerx-core-cluster'
+      `).run(JSON.stringify(['Guaranteed Uptime Protection', 'Always-On Traffic Protection', 'Private Encrypted Networking', 'Priority Engineering Support']));
+
+      db.prepare(`
+        UPDATE products
+        SET name = 'HelzerX NeuralOps Suite',
+            tagline = 'Private company intelligence and workflow automation',
+            description = 'Deploy private intelligent assistants, instant company knowledge search, and automated document workflows tailored to your organization.',
+            features_json = ?
+        WHERE slug = 'helzerx-neuralops-engine'
+      `).run(JSON.stringify(['Strict Private Data Ownership', 'Team Access Permissions', 'Complete Activity Records', 'Custom Business Integrations']));
+
+      db.prepare(`
+        UPDATE products
+        SET name = 'HelzerX Sentinel Protection',
+            tagline = 'Continuous perimeter defense and security oversight',
+            description = 'Round-the-clock protection safeguarding your customer portals, payment checkouts, and online operations against unauthorized access.',
+            features_json = ?
+        WHERE slug = 'helzerx-sentinel-shield'
+      `).run(JSON.stringify(['Real-Time Threat Blocking', 'Automated Fraud Prevention', 'Scheduled Security Reviews', 'Rapid Incident Response']));
+
+      db.prepare(`
+        UPDATE products
+        SET name = 'Dedicated Engineering Partner',
+            tagline = 'Bespoke platform design, billing systems & software delivery',
+            description = 'Collaborate directly with senior HelzerX specialists to design custom portals, financial workflows, and scalable digital experiences.',
+            features_json = ?
+        WHERE slug = 'dedicated-architecture-retainer'
+      `).run(JSON.stringify(['Senior Lead Assigned', 'Direct Team Communication', 'Weekly Progress Releases', 'Full Ownership Guaranteed']));
+
+      const pkgUpdates: Array<[string, string]> = [
+        ['Starter Node (8 vCPU / 32GB)', 'Essential Cloud Tier'],
+        ['Growth Cluster (16 vCPU / 64GB)', 'Business Growth Tier'],
+        ['Enterprise HA (Annual)', 'Enterprise Annual Plan'],
+        ['Enterprise Sovereign Stack', 'Enterprise Private Suite'],
+        ['Perimeter Standard', 'Standard Protection'],
+        ['Sprint Block (40 Hours)', 'Focused Delivery Sprint'],
+        ['Quarter Retainer (160 Hours)', 'Quarterly Advisory Retainer'],
+      ];
+      for (const [oldName, newName] of pkgUpdates) {
+        db.prepare('UPDATE packages SET name = ? WHERE name = ?').run(newName, oldName);
+      }
+    },
+  },
 ];
 

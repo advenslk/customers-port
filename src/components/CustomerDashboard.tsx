@@ -39,6 +39,7 @@ import {
   statusColorClass,
 } from '../lib/api';
 import { PasswordStrengthField } from './PasswordStrengthField';
+import { Tilt3DCard } from './Tilt3DCard';
 
 type CustomerTab = 'overview' | 'orders' | 'invoices' | 'services' | 'payments' | 'support' | 'settings';
 
@@ -369,30 +370,34 @@ export function CustomerDashboard({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5 hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
+                <Tilt3DCard maxTilt={7} className="bg-[#0D0D11] border border-white/10 rounded-xl p-5">
                   <div className="text-xs text-zinc-400">Total Orders</div>
                   <div className="font-display text-3xl font-bold text-white tabular-nums mt-2">
                     {overview?.stats?.total_orders ?? 0}
                   </div>
-                </div>
-                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5 hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
+                </Tilt3DCard>
+                <Tilt3DCard maxTilt={7} className="bg-[#0D0D11] border border-white/10 rounded-xl p-5">
                   <div className="text-xs text-zinc-400">Active Services</div>
                   <div className="font-display text-3xl font-bold text-emerald-400 tabular-nums mt-2">
                     {overview?.stats?.active_services ?? 0}
                   </div>
-                </div>
-                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5 hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
+                </Tilt3DCard>
+                <Tilt3DCard maxTilt={7} className="bg-[#0D0D11] border border-white/10 rounded-xl p-5">
                   <div className="text-xs text-zinc-400">Pending Payments</div>
-                  <div className="font-display text-3xl font-bold text-orange-400 font-mono tabular-nums mt-2">
+                  <div className="font-display text-3xl font-bold text-orange-400 tabular-nums mt-2">
                     {formatCurrency(overview?.stats?.pending_payments_cents ?? 0)}
                   </div>
-                </div>
-                <div className="hx-featured-card rounded-xl p-5 text-white hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
-                  <div className="text-xs text-orange-100/80">Total Verified Spending</div>
-                  <div className="font-display text-3xl font-bold font-mono tabular-nums mt-2">
+                </Tilt3DCard>
+                <Tilt3DCard
+                  maxTilt={7}
+                  glowColor="rgba(255, 255, 255, 0.2)"
+                  className="hx-featured-card rounded-xl p-5 text-white border border-orange-400/30"
+                >
+                  <div className="text-xs text-orange-100/85">Total Verified Spending</div>
+                  <div className="font-display text-3xl font-bold tabular-nums mt-2">
                     {formatCurrency(overview?.stats?.total_spending_cents ?? 0)}
                   </div>
-                </div>
+                </Tilt3DCard>
               </div>
 
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -712,38 +717,49 @@ export function CustomerDashboard({
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {services.map((svc) => (
-                    <div key={svc.id} className="p-5 rounded-xl bg-[#070709] border border-white/10 space-y-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="font-mono text-xs text-orange-400">{svc.service_code}</div>
-                          <h3 className="font-display text-base font-bold text-white mt-0.5">{svc.product_name}</h3>
-                          <div className="text-xs text-zinc-400">{svc.package_name}</div>
+                    <Tilt3DCard key={svc.id} maxTilt={6} className="p-5 rounded-xl bg-[#070709] border border-white/10">
+                      <div className="flex flex-col justify-between h-full space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="text-xs font-medium text-orange-400">{svc.service_code}</div>
+                            <h3 className="font-display text-base font-bold text-white mt-0.5">{svc.product_name}</h3>
+                            <div className="text-xs text-zinc-400">{svc.package_name}</div>
+                          </div>
+                          <span className={`text-xs font-semibold ${statusColorClass(svc.status)}`}>{svc.status}</span>
                         </div>
-                        <span className={`text-xs font-semibold ${statusColorClass(svc.status)}`}>{svc.status}</span>
+                        <div className="text-xs text-zinc-400 space-y-1.5 pt-2 border-t border-white/5">
+                          <div className="flex justify-between gap-2">
+                            <span>Provisioning Status</span>
+                            <span className="text-zinc-200 font-medium">{svc.endpoint_info || 'Active Allocation'}</span>
+                          </div>
+                          <div className="flex justify-between gap-2">
+                            <span>Started On</span>
+                            <span className="text-zinc-300 tabular-nums">{formatDate(svc.started_at)}</span>
+                          </div>
+                          <div className="flex justify-between gap-2">
+                            <span>Renewal Date</span>
+                            <span className="text-zinc-200 tabular-nums">{formatDate(svc.expires_at)}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between pt-3 border-t border-white/5">
+                          <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(svc.auto_renew)}
+                              onChange={() => handleToggleAutoRenew(svc.id, Boolean(svc.auto_renew))}
+                              className="accent-orange-500"
+                            />
+                            Auto-Renew Reminder
+                          </label>
+                          <button
+                            onClick={() => handleRenewService(svc.id)}
+                            className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-orange-600 hover:bg-orange-500 text-white transition-colors"
+                          >
+                            Renew Service
+                          </button>
+                        </div>
                       </div>
-                      <div className="text-xs text-zinc-400 space-y-1 pt-2 border-t border-white/5">
-                        <div>Endpoint: <span className="font-mono text-zinc-200">{svc.endpoint_info || 'Pending'}</span></div>
-                        <div>Started: <span className="font-mono text-zinc-300">{formatDate(svc.started_at)}</span></div>
-                        <div>Expires: <span className="font-mono text-zinc-200">{formatDate(svc.expires_at)}</span></div>
-                      </div>
-                      <div className="flex items-center justify-between pt-3 border-t border-white/5">
-                        <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(svc.auto_renew)}
-                            onChange={() => handleToggleAutoRenew(svc.id, Boolean(svc.auto_renew))}
-                            className="accent-orange-500"
-                          />
-                          Auto-Renew Reminder
-                        </label>
-                        <button
-                          onClick={() => handleRenewService(svc.id)}
-                          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-orange-600 hover:bg-orange-500 text-white"
-                        >
-                          Renew Service
-                        </button>
-                      </div>
-                    </div>
+                    </Tilt3DCard>
                   ))}
                 </div>
               )}
