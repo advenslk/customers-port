@@ -1,0 +1,6 @@
+{
+  "name": "HelzerX Customer Portal",
+  "description": "Enterprise-grade customer portal, order management, billing, automated PDF invoicing, payment verification, support ticketing, and CRM platform for HelzerX Technologies (customers.helzerx.cyou).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
