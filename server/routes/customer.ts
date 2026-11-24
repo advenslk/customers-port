@@ -15,14 +15,23 @@ import {
   generateTicketNumber,
   generateTransactionCode,
 } from '../db';
+import jwt from 'jsonwebtoken';
 import {
   AuthenticatedRequest,
+  JWT_SECRET,
+  computeSessionFingerprint,
+  escapeHtml,
   getClientIp,
+  issueCsrfToken,
   logActivity,
   requireAuth,
   sanitizeUser,
   setSessionCookie,
+  sha256,
   signSessionToken,
+  validateStrongPassword,
+  validateUploadedFileMagicBytes,
+  verifyAuthChallenge,
 } from '../services/security';
 import { createInAppNotification, notifyAllAdmins, sendDiscordWebhook, sendTransactionalEmail } from '../services/notifications';
 import { formatMoney, generateInvoicePdfBuffer } from '../services/pdfInvoice';
@@ -74,7 +83,8 @@ const checkoutSchema = z.object({
   // Personal info
   full_name: z.string().trim().min(2, 'Full name is required').max(120),
   email: z.string().trim().email('Valid email address is required').max(180),
-  password: z.string().min(8).max(128).optional(),
+  password: z.string().min(12, 'Password must be at least 12 characters').max(128).optional(),
+  challenge_token: z.string().optional(),
   mobile: z.string().trim().min(5, 'Mobile number is required').max(40),
   country: z.string().trim().min(2, 'Country is required').max(80),
   city: z.string().trim().min(2, 'City is required').max(80),
@@ -110,15 +120,36 @@ router.post('/checkout', async (req: AuthenticatedRequest, res) => {
   // Check if user is logged in via cookie manually (optional auth for checkout)
   let currentUserId = req.user?.id || null;
   if (!currentUserId && req.cookies?.hx_session) {
-    // Try resolving session softly if route wasn't behind requireAuth
     try {
-      const jwt = await import('jsonwebtoken');
-      const secret = process.env.JWT_SECRET || crypto.createHash('sha256').update('helzerx-dev-fallback-secret-change-in-prod').digest('hex');
-      const decoded = jwt.default.verify(req.cookies.hx_session, secret) as unknown as { sub: number; jti: string };
-      const sess = db.prepare("SELECT id FROM sessions WHERE token_jti = ? AND revoked_at IS NULL AND expires_at > datetime('now')").get(decoded.jti);
-      if (sess) currentUserId = decoded.sub;
+      const decoded = jwt.verify(req.cookies.hx_session, JWT_SECRET, { algorithms: ['HS256'] }) as unknown as {
+        sub: number;
+        jti: string;
+      };
+      const sess = db
+        .prepare("SELECT id, session_fingerprint FROM sessions WHERE token_jti = ? AND revoked_at IS NULL AND expires_at > datetime('now')")
+        .get(decoded.jti) as any;
+      const currentFp = computeSessionFingerprint(req);
+      if (sess && (!sess.session_fingerprint || sess.session_fingerprint === currentFp)) {
+        currentUserId = decoded.sub;
+      }
     } catch {
       currentUserId = null;
+    }
+  }
+
+  if (!currentUserId) {
+    if (!verifyAuthChallenge(data.challenge_token)) {
+      res.status(400).json({ error: 'Security verification challenge expired. Please refresh and try again.' });
+      return;
+    }
+    if (!data.password) {
+      res.status(400).json({ error: 'Please provide a strong password (12+ characters) to create your customer account.' });
+      return;
+    }
+    const pwErr = validateStrongPassword(data.password, { email: normalizedEmail, fullName: data.full_name });
+    if (pwErr) {
+      res.status(400).json({ error: pwErr });
+      return;
     }
   }
 
@@ -135,6 +166,9 @@ router.post('/checkout', async (req: AuthenticatedRequest, res) => {
 
   let createdNewAccount = false;
   let newSessionToken: string | null = null;
+  const ip = getClientIp(req);
+  const ua = req.headers['user-agent'] || '';
+  const fp = computeSessionFingerprint(req);
 
   try {
     const result = db.transaction(() => {
@@ -146,19 +180,22 @@ router.post('/checkout', async (req: AuthenticatedRequest, res) => {
         if (existingUser) {
           throw new Error('ACCOUNT_EXISTS');
         }
-        if (!data.password || data.password.length < 8) {
+        if (!data.password || data.password.length < 12) {
           throw new Error('PASSWORD_REQUIRED');
         }
 
         customerCode = generateCustomerCode();
-        const pwHash = bcrypt.hashSync(data.password, 10);
-        const verToken = crypto.randomBytes(24).toString('hex');
+        const pwHash = bcrypt.hashSync(data.password, 12);
+        const rawVerToken = crypto.randomBytes(16).toString('hex').toUpperCase();
+        const verHash = sha256(rawVerToken);
+        const verExpires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
         const uRes = db.prepare(`
           INSERT INTO users (
             customer_code, email, password_hash, role, full_name, mobile, country, city,
-            billing_address, postal_code, company_name, discord_username, email_verified, verification_token
-          ) VALUES (?, ?, ?, 'customer', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+            billing_address, postal_code, company_name, discord_username, email_verified,
+            verification_token, verification_expires_at, last_login_ip, last_login_at
+          ) VALUES (?, ?, ?, 'customer', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, datetime('now'))
         `).run(
           customerCode,
           normalizedEmail,
@@ -171,7 +208,9 @@ router.post('/checkout', async (req: AuthenticatedRequest, res) => {
           data.postal_code,
           data.company_name,
           data.discord_username,
-          verToken
+          verHash,
+          verExpires,
+          ip
         );
         userId = Number(uRes.lastInsertRowid);
         createdNewAccount = true;
@@ -345,14 +384,13 @@ router.post('/checkout', async (req: AuthenticatedRequest, res) => {
 
     if (createdNewAccount) {
       const jti = crypto.randomUUID();
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-      const ip = getClientIp(req);
-      const ua = req.headers['user-agent'] || '';
-      db.prepare('INSERT INTO sessions (user_id, token_jti, ip_address, user_agent, expires_at) VALUES (?, ?, ?, ?, ?)').run(
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      db.prepare('INSERT INTO sessions (user_id, token_jti, ip_address, user_agent, session_fingerprint, expires_at) VALUES (?, ?, ?, ?, ?, ?)').run(
         result.userId,
         jti,
         ip,
         ua,
+        fp,
         expiresAt
       );
       newSessionToken = signSessionToken(
@@ -367,6 +405,7 @@ router.post('/checkout', async (req: AuthenticatedRequest, res) => {
         jti
       );
       setSessionCookie(res, newSessionToken);
+      issueCsrfToken(res);
     }
 
     logActivity({
@@ -376,7 +415,7 @@ router.post('/checkout', async (req: AuthenticatedRequest, res) => {
       entityType: 'order',
       entityId: result.orderNumber,
       details: { invoice_number: result.invoiceNumber, total_cents: result.totalCents },
-      ipAddress: getClientIp(req),
+      ipAddress: ip,
     });
 
     createInAppNotification({
@@ -402,11 +441,11 @@ router.post('/checkout', async (req: AuthenticatedRequest, res) => {
       heading: `Invoice ${result.invoiceNumber} Generated`,
       preheader: `Order ${result.orderNumber} received. Payment due: ${formatMoney(result.totalCents, result.currency)}.`,
       bodyHtml: `
-        <p>Hello ${data.full_name},</p>
-        <p>Your order <strong>${result.orderNumber}</strong> for <strong>${product.name} (${pkg.name})</strong> has been received and invoice <strong>${result.invoiceNumber}</strong> has been generated.</p>
-        <p><strong>Amount Due:</strong> ${formatMoney(result.totalCents, result.currency)}<br/>
+        <p>Hello ${escapeHtml(data.full_name)},</p>
+        <p>Your order <strong>${escapeHtml(result.orderNumber)}</strong> for <strong>${escapeHtml(product.name)} (${escapeHtml(pkg.name)})</strong> has been received and invoice <strong>${escapeHtml(result.invoiceNumber)}</strong> has been generated.</p>
+        <p><strong>Amount Due:</strong> ${escapeHtml(formatMoney(result.totalCents, result.currency))}<br/>
         <strong>Invoice Status:</strong> Unpaid<br/>
-        <strong>Payment Method:</strong> ${data.payment_method}</p>
+        <strong>Payment Method:</strong> ${escapeHtml(data.payment_method)}</p>
         <p>You can download your PDF invoice and submit your payment receipt directly in the customer portal.</p>
       `,
       ctaLabel: 'View Invoice & Pay',
@@ -437,7 +476,7 @@ router.post('/checkout', async (req: AuthenticatedRequest, res) => {
   } catch (err: any) {
     const msgMap: Record<string, { status: number; msg: string }> = {
       ACCOUNT_EXISTS: { status: 409, msg: 'An account with this email already exists. Please sign in first before placing an order.' },
-      PASSWORD_REQUIRED: { status: 400, msg: 'Please provide a password (min 8 characters) to create your customer account.' },
+      PASSWORD_REQUIRED: { status: 400, msg: 'Please provide a strong password (min 12 characters) to create your customer account.' },
       INVALID_COUPON: { status: 400, msg: 'Promo code is invalid or inactive.' },
       EXPIRED_COUPON: { status: 400, msg: 'Promo code has expired.' },
       COUPON_LIMIT: { status: 400, msg: 'Promo code usage limit reached.' },
@@ -750,15 +789,22 @@ router.post('/payments/manual', uploadReceipt.single('receipt'), async (req: Aut
   const transactionRef = String(req.body?.transaction_ref || '').trim();
 
   if (!['Bank Transfer', 'Manual Payment', 'Cryptocurrency'].includes(method)) {
+    if (req.file) fs.unlinkSync(req.file.path);
     res.status(400).json({ error: 'Invalid manual payment method.' });
     return;
   }
   if (!transactionRef || transactionRef.length < 3) {
+    if (req.file) fs.unlinkSync(req.file.path);
     res.status(400).json({ error: 'Transaction reference or wire ID is required.' });
     return;
   }
   if (!req.file) {
-    res.status(400).json({ error: 'Payment receipt file (JPG, PNG, or PDF) is required.' });
+    res.status(400).json({ error: 'Payment receipt file (JPG, PNG, WEBP, or PDF) is required.' });
+    return;
+  }
+  if (!validateUploadedFileMagicBytes(req.file.path, req.file.mimetype)) {
+    fs.unlinkSync(req.file.path);
+    res.status(400).json({ error: 'Uploaded file signature failed security verification.' });
     return;
   }
 
@@ -1063,6 +1109,11 @@ router.post('/tickets', uploadTicketAttachment.single('attachment'), async (req:
     res.status(400).json({ error: 'Invalid priority.' });
     return;
   }
+  if (req.file && !validateUploadedFileMagicBytes(req.file.path, req.file.mimetype)) {
+    fs.unlinkSync(req.file.path);
+    res.status(400).json({ error: 'Uploaded attachment failed security signature verification.' });
+    return;
+  }
 
   const ticketNumber = generateTicketNumber();
   const ticketId = db.transaction(() => {
@@ -1093,8 +1144,8 @@ router.post('/tickets', uploadTicketAttachment.single('attachment'), async (req:
     templateName: 'ticket_created',
     heading: `Ticket ${ticketNumber} Opened`,
     preheader: `Our engineering support desk received your request.`,
-    bodyHtml: `<p>Your support ticket <strong>${ticketNumber}</strong> (${priority} Priority) has been created.</p>
-      <p><strong>Subject:</strong> ${subject}<br/><strong>Category:</strong> ${category}</p>`,
+    bodyHtml: `<p>Your support ticket <strong>${escapeHtml(ticketNumber)}</strong> (${escapeHtml(priority)} Priority) has been created.</p>
+      <p><strong>Subject:</strong> ${escapeHtml(subject)}<br/><strong>Category:</strong> ${escapeHtml(category)}</p>`,
   });
 
   await sendDiscordWebhook({
@@ -1138,6 +1189,11 @@ router.post('/tickets/:id/reply', uploadTicketAttachment.single('attachment'), (
   const message = String(req.body?.message || '').trim();
   if (!message && !req.file) {
     res.status(400).json({ error: 'Reply message or attachment is required.' });
+    return;
+  }
+  if (req.file && !validateUploadedFileMagicBytes(req.file.path, req.file.mimetype)) {
+    fs.unlinkSync(req.file.path);
+    res.status(400).json({ error: 'Uploaded attachment failed security signature verification.' });
     return;
   }
 
@@ -1299,11 +1355,19 @@ router.patch('/profile', (req: AuthenticatedRequest, res) => {
 router.post('/profile/password', (req: AuthenticatedRequest, res) => {
   const schema = z.object({
     current_password: z.string().min(1),
-    new_password: z.string().min(8).max(128),
+    new_password: z.string().min(12).max(128),
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: 'Current password and minimum 8-character new password required.' });
+    res.status(400).json({ error: 'Current password and strong 12+ character new password required.' });
+    return;
+  }
+  const pwErr = validateStrongPassword(parsed.data.new_password, {
+    email: req.user!.email,
+    fullName: req.user!.full_name,
+  });
+  if (pwErr) {
+    res.status(400).json({ error: pwErr });
     return;
   }
   const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user!.id) as any;
@@ -1311,9 +1375,24 @@ router.post('/profile/password', (req: AuthenticatedRequest, res) => {
     res.status(401).json({ error: 'Current password is incorrect.' });
     return;
   }
-  const newHash = bcrypt.hashSync(parsed.data.new_password, 10);
-  db.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?").run(newHash, req.user!.id);
-  logActivity({ userId: req.user!.id, actorUserId: req.user!.id, action: 'password_changed', entityType: 'user', entityId: req.user!.id });
+  const newHash = bcrypt.hashSync(parsed.data.new_password, 12);
+  db.transaction(() => {
+    db.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?").run(newHash, req.user!.id);
+    if (req.sessionJti) {
+      db.prepare("UPDATE sessions SET revoked_at = datetime('now') WHERE user_id = ? AND token_jti != ?").run(
+        req.user!.id,
+        req.sessionJti
+      );
+    }
+  })();
+  logActivity({
+    userId: req.user!.id,
+    actorUserId: req.user!.id,
+    action: 'password_changed',
+    entityType: 'user',
+    entityId: req.user!.id,
+    ipAddress: getClientIp(req),
+  });
   res.json({ ok: true });
 });
 

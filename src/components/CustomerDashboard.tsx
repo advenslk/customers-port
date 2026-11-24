@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   Activity,
   Bell,
@@ -25,7 +26,19 @@ import {
   Upload,
 } from 'lucide-react';
 import { Invoice, Order, UserProfile } from '../types';
-import { apiFetch, downloadInvoicePdf, formatCurrency, formatDate, formatDateTime, statusColorClass } from '../lib/api';
+import {
+  apiFetch,
+  downloadInvoicePdf,
+  evaluatePasswordStrength,
+  formatAuditAction,
+  formatAuditEntity,
+  formatCurrency,
+  formatDate,
+  formatDateTime,
+  formatFailureReason,
+  statusColorClass,
+} from '../lib/api';
+import { PasswordStrengthField } from './PasswordStrengthField';
 
 type CustomerTab = 'overview' | 'orders' | 'invoices' | 'services' | 'payments' | 'support' | 'settings';
 
@@ -109,6 +122,8 @@ export function CustomerDashboard({
   const [pwForm, setPwForm] = useState({ current_password: '', new_password: '' });
   const [totpSetup, setTotpSetup] = useState<{ secret: string; otpauth_url: string } | null>(null);
   const [totpVerifyCode, setTotpVerifyCode] = useState('');
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [regen2faPw, setRegen2faPw] = useState('');
   const [disable2faPw, setDisable2faPw] = useState('');
   const [newAddress, setNewAddress] = useState({
     label: '',
@@ -324,9 +339,18 @@ export function CustomerDashboard({
         </aside>
 
         <main className="lg:col-span-9 space-y-6 min-w-0">
+          <AnimatePresence mode="wait">
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.22 }}
+            className="space-y-6"
+          >
           {tab === 'overview' && (
             <div className="space-y-6">
-              <div className="flex flex-wrap items-center justify-between gap-4 bg-[#0D0D11] border border-white/10 rounded-2xl p-6">
+              <div className="flex flex-wrap items-center justify-between gap-4 bg-[#0D0D11] border border-white/10 rounded-2xl p-6 hx-card-3d">
                 <div>
                   <div className="text-xs text-zinc-400">
                     Customer Portal · <span className="font-mono text-orange-400">{user.customer_code}</span>
@@ -337,7 +361,7 @@ export function CustomerDashboard({
                 </div>
                 <button
                   onClick={loadAll}
-                  className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-zinc-200 whitespace-nowrap"
+                  className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-zinc-200 whitespace-nowrap transition-colors"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                   Refresh Data
@@ -345,25 +369,25 @@ export function CustomerDashboard({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5">
+                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5 hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
                   <div className="text-xs text-zinc-400">Total Orders</div>
                   <div className="font-display text-3xl font-bold text-white tabular-nums mt-2">
                     {overview?.stats?.total_orders ?? 0}
                   </div>
                 </div>
-                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5">
+                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5 hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
                   <div className="text-xs text-zinc-400">Active Services</div>
                   <div className="font-display text-3xl font-bold text-emerald-400 tabular-nums mt-2">
                     {overview?.stats?.active_services ?? 0}
                   </div>
                 </div>
-                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5">
+                <div className="bg-[#0D0D11] border border-white/10 rounded-xl p-5 hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
                   <div className="text-xs text-zinc-400">Pending Payments</div>
                   <div className="font-display text-3xl font-bold text-orange-400 font-mono tabular-nums mt-2">
                     {formatCurrency(overview?.stats?.pending_payments_cents ?? 0)}
                   </div>
                 </div>
-                <div className="hx-featured-card rounded-xl p-5 text-white">
+                <div className="hx-featured-card rounded-xl p-5 text-white hx-card-3d transition-transform duration-200 hover:-translate-y-0.5">
                   <div className="text-xs text-orange-100/80">Total Verified Spending</div>
                   <div className="font-display text-3xl font-bold font-mono tabular-nums mt-2">
                     {formatCurrency(overview?.stats?.total_spending_cents ?? 0)}
@@ -419,8 +443,8 @@ export function CustomerDashboard({
                       (overview?.recent_activities || []).map((act: any) => (
                         <div key={act.id} className="flex items-start justify-between gap-3 py-2 border-b border-white/5 last:border-0 text-xs">
                           <div>
-                            <div className="text-zinc-200 font-medium capitalize">{String(act.action).replace(/_/g, ' ')}</div>
-                            <div className="text-zinc-500 font-mono mt-0.5">{act.entity_type} · {act.entity_id}</div>
+                            <div className="text-zinc-200 font-medium">{formatAuditAction(act.action)}</div>
+                            <div className="text-zinc-500 mt-0.5">{formatAuditEntity(act.entity_type, act.entity_id)}</div>
                           </div>
                           <div className="text-zinc-500 font-mono whitespace-nowrap">{formatDateTime(act.created_at)}</div>
                         </div>
@@ -588,7 +612,7 @@ export function CustomerDashboard({
                   )}
 
                   <div className="space-y-2 pt-3 border-t border-white/10">
-                    <div className="text-xs font-semibold text-zinc-400">Status Audit Log</div>
+                    <div className="text-xs font-semibold text-zinc-400">Order Activity Timeline</div>
                     {selectedOrder.history.map((h) => (
                       <div key={h.id} className="flex flex-wrap justify-between gap-2 text-xs py-1.5 border-b border-white/5 last:border-0">
                         <div>
@@ -1049,8 +1073,12 @@ export function CustomerDashboard({
                         <button
                           type="button"
                           onClick={async () => {
-                            const r = await apiFetch<any>('/api/auth/resend-verification', { method: 'POST' });
-                            onNotify('success', r.verification_token_preview ? `Code sent: ${r.verification_token_preview}` : 'Verification code sent.');
+                            try {
+                              await apiFetch<any>('/api/auth/resend-verification', { method: 'POST' });
+                              onNotify('success', 'Verification code dispatched to your registered email inbox.');
+                            } catch (err: any) {
+                              onNotify('error', err.message);
+                            }
                           }}
                           className="text-orange-400 hover:underline"
                         >
@@ -1063,18 +1091,35 @@ export function CustomerDashboard({
                   <form
                     onSubmit={async (e) => {
                       e.preventDefault();
+                      if (!evaluatePasswordStrength(pwForm.new_password).isValid) {
+                        onNotify('error', 'New password must meet all 12+ character security requirements.');
+                        return;
+                      }
                       try {
                         await apiFetch('/api/profile/password', { method: 'POST', body: JSON.stringify(pwForm) });
                         setPwForm({ current_password: '', new_password: '' });
-                        onNotify('success', 'Password updated.');
+                        onNotify('success', 'Password updated and other active sessions revoked.');
+                        loadSettingsData();
                       } catch (err: any) {
                         onNotify('error', err.message);
                       }
                     }}
                     className="space-y-3 pt-2 border-t border-white/10"
                   >
-                    <input type="password" required placeholder="Current password" value={pwForm.current_password} onChange={(e) => setPwForm({ ...pwForm, current_password: e.target.value })} className="w-full px-3 py-2 text-xs bg-[#070709] border border-white/15 rounded-lg text-white" />
-                    <input type="password" required minLength={8} placeholder="New password (min 8 chars)" value={pwForm.new_password} onChange={(e) => setPwForm({ ...pwForm, new_password: e.target.value })} className="w-full px-3 py-2 text-xs bg-[#070709] border border-white/15 rounded-lg text-white" />
+                    <input
+                      type="password"
+                      required
+                      placeholder="Current password"
+                      value={pwForm.current_password}
+                      onChange={(e) => setPwForm({ ...pwForm, current_password: e.target.value })}
+                      className="w-full px-3 py-2 text-xs bg-[#070709] border border-white/15 rounded-lg text-white"
+                    />
+                    <PasswordStrengthField
+                      value={pwForm.new_password}
+                      onChange={(val) => setPwForm({ ...pwForm, new_password: val })}
+                      placeholder="Choose a new strong password"
+                      compact
+                    />
                     <button type="submit" className="px-4 py-2 text-xs font-semibold border border-white/15 bg-white/5 hover:bg-white/10 text-white rounded-lg">
                       Update Password
                     </button>
@@ -1085,15 +1130,39 @@ export function CustomerDashboard({
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 font-display font-bold text-white">
                       <Shield className="w-4 h-4 text-orange-400" />
-                      Two-Factor Authentication (TOTP)
+                      Two-Factor Authentication
                     </div>
                     <span className={`text-xs font-semibold ${user.two_factor_enabled ? 'text-emerald-400' : 'text-zinc-400'}`}>
                       {user.two_factor_enabled ? 'Enabled' : 'Disabled'}
                     </span>
                   </div>
                   <p className="text-xs text-zinc-400 leading-relaxed">
-                    Protect your billing account with RFC 6238 authenticator codes (Google Authenticator, Authy, 1Password).
+                    Protect your billing account with authenticator app verification and single-use backup recovery codes.
                   </p>
+
+                  {recoveryCodes && (
+                    <div className="p-3.5 rounded-xl bg-orange-950/30 border border-orange-500/40 space-y-2 text-xs">
+                      <div className="font-semibold text-orange-300">Save Your Single-Use Backup Recovery Codes</div>
+                      <p className="text-zinc-400">
+                        Store these codes offline. Each code works once if you lose access to your authenticator device.
+                      </p>
+                      <div className="grid grid-cols-2 gap-1.5 font-mono text-white pt-1">
+                        {recoveryCodes.map((c) => (
+                          <div key={c} className="px-2 py-1 rounded bg-[#070709] border border-white/10 select-all text-center">
+                            {c}
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setRecoveryCodes(null)}
+                        className="text-[11px] text-zinc-400 hover:text-white underline pt-1"
+                      >
+                        Dismiss saved codes
+                      </button>
+                    </div>
+                  )}
+
                   {!user.two_factor_enabled ? (
                     !totpSetup ? (
                       <button
@@ -1122,10 +1191,16 @@ export function CustomerDashboard({
                             type="button"
                             onClick={async () => {
                               try {
-                                await apiFetch('/api/auth/2fa/enable', { method: 'POST', body: JSON.stringify({ code: totpVerifyCode }) });
+                                const res = await apiFetch<{ enabled: boolean; recovery_codes: string[] }>('/api/auth/2fa/enable', {
+                                  method: 'POST',
+                                  body: JSON.stringify({ code: totpVerifyCode }),
+                                });
                                 setTotpSetup(null);
                                 setTotpVerifyCode('');
-                                onNotify('success', 'Two-Factor Authentication enabled.');
+                                if (res.recovery_codes?.length) {
+                                  setRecoveryCodes(res.recovery_codes);
+                                }
+                                onNotify('success', 'Two-Factor Authentication enabled. Save your recovery codes.');
                                 loadSettingsData();
                               } catch (err: any) {
                                 onNotify('error', err.message);
@@ -1139,30 +1214,65 @@ export function CustomerDashboard({
                       </div>
                     )
                   ) : (
-                    <div className="space-y-2">
-                      <input
-                        type="password"
-                        value={disable2faPw}
-                        onChange={(e) => setDisable2faPw(e.target.value)}
-                        placeholder="Enter password to disable 2FA"
-                        className="w-full px-3 py-2 text-xs bg-[#070709] border border-white/15 rounded-lg text-white"
-                      />
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          try {
-                            await apiFetch('/api/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ password: disable2faPw }) });
-                            setDisable2faPw('');
-                            onNotify('success', '2FA disabled.');
-                            loadSettingsData();
-                          } catch (err: any) {
-                            onNotify('error', err.message);
-                          }
-                        }}
-                        className="px-3 py-1.5 text-xs font-semibold border border-rose-500/30 text-rose-300 rounded-lg"
-                      >
-                        Disable 2FA
-                      </button>
+                    <div className="space-y-3">
+                      <div className="space-y-2 p-3 rounded-xl bg-[#070709] border border-white/10">
+                        <div className="text-xs font-medium text-zinc-300">Regenerate Backup Recovery Codes</div>
+                        <div className="flex gap-2">
+                          <input
+                            type="password"
+                            value={regen2faPw}
+                            onChange={(e) => setRegen2faPw(e.target.value)}
+                            placeholder="Confirm password"
+                            className="flex-1 px-3 py-1.5 text-xs bg-[#0D0D11] border border-white/15 rounded-lg text-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const res = await apiFetch<{ recovery_codes: string[] }>('/api/auth/2fa/regenerate-recovery', {
+                                  method: 'POST',
+                                  body: JSON.stringify({ password: regen2faPw }),
+                                });
+                                setRegen2faPw('');
+                                setRecoveryCodes(res.recovery_codes || []);
+                                onNotify('success', 'New backup recovery codes generated. Prior codes invalidated.');
+                              } catch (err: any) {
+                                onNotify('error', err.message);
+                              }
+                            }}
+                            className="px-3 py-1.5 text-xs font-semibold bg-white/10 hover:bg-white/15 text-white rounded-lg whitespace-nowrap"
+                          >
+                            Regenerate
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <input
+                          type="password"
+                          value={disable2faPw}
+                          onChange={(e) => setDisable2faPw(e.target.value)}
+                          placeholder="Enter password to disable 2FA"
+                          className="w-full px-3 py-2 text-xs bg-[#070709] border border-white/15 rounded-lg text-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await apiFetch('/api/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ password: disable2faPw }) });
+                              setDisable2faPw('');
+                              setRecoveryCodes(null);
+                              onNotify('success', '2FA disabled.');
+                              loadSettingsData();
+                            } catch (err: any) {
+                              onNotify('error', err.message);
+                            }
+                          }}
+                          className="px-3 py-1.5 text-xs font-semibold border border-rose-500/30 text-rose-300 rounded-lg"
+                        >
+                          Disable 2FA
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1225,7 +1335,24 @@ export function CustomerDashboard({
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-[#0D0D11] border border-white/10 rounded-2xl p-6 space-y-3">
-                  <h3 className="font-display font-bold text-white text-sm">Active Sessions</h3>
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="font-display font-bold text-white text-sm">Active Sessions</h3>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await apiFetch('/api/auth/logout-all', { method: 'POST' });
+                          onNotify('success', 'All device sessions revoked.');
+                          onLogout();
+                        } catch (err: any) {
+                          onNotify('error', err.message);
+                        }
+                      }}
+                      className="text-xs text-rose-400 hover:underline whitespace-nowrap"
+                    >
+                      Sign Out All Devices
+                    </button>
+                  </div>
                   {sessions.map((s) => (
                     <div key={s.id} className="flex items-center justify-between gap-2 text-xs py-2 border-b border-white/5">
                       <div className="min-w-0">
@@ -1254,7 +1381,7 @@ export function CustomerDashboard({
                       <div key={h.id} className="flex items-center justify-between text-xs py-1.5 border-b border-white/5">
                         <div>
                           <span className={h.success ? 'text-emerald-400' : 'text-rose-400'}>
-                            {h.success ? 'Successful Sign In' : `Failed (${h.failure_reason})`}
+                            {h.success ? 'Successful Sign In' : formatFailureReason(h.failure_reason)}
                           </span>
                           <div className="text-zinc-500 font-mono">{h.ip_address}</div>
                         </div>
@@ -1278,6 +1405,8 @@ export function CustomerDashboard({
               </div>
             </div>
           )}
+          </motion.div>
+          </AnimatePresence>
         </main>
       </div>
 

@@ -7,7 +7,15 @@ import {
   generateServiceCode,
   generateTransactionCode,
 } from '../db';
-import { AuthenticatedRequest, logActivity, requireAdmin, requireAuth, sanitizeUser } from '../services/security';
+import {
+  AuthenticatedRequest,
+  escapeHtml,
+  getClientIp,
+  logActivity,
+  requireAdmin,
+  requireAuth,
+  sanitizeUser,
+} from '../services/security';
 import { createInAppNotification, sendDiscordWebhook, sendTransactionalEmail } from '../services/notifications';
 import { formatMoney } from '../services/pdfInvoice';
 
@@ -294,9 +302,9 @@ router.patch('/orders/:id', async (req: AuthenticatedRequest, res) => {
       templateName: 'order_status_updated',
       heading: `Order Status: ${status}`,
       preheader: `Order ${order.order_number} has moved to ${status}.`,
-      bodyHtml: `<p>Hello ${order.full_name},</p>
-        <p>Your order <strong>${order.order_number}</strong> has been updated from <strong>${order.status}</strong> to <strong>${status}</strong>.</p>
-        ${note ? `<p><strong>Engineer Note:</strong> ${note}</p>` : ''}`,
+      bodyHtml: `<p>Hello ${escapeHtml(order.full_name)},</p>
+        <p>Your order <strong>${escapeHtml(order.order_number)}</strong> has been updated from <strong>${escapeHtml(order.status)}</strong> to <strong>${escapeHtml(status)}</strong>.</p>
+        ${note ? `<p><strong>Engineer Note:</strong> ${escapeHtml(note)}</p>` : ''}`,
     });
 
     if (status === 'Completed') {
@@ -428,7 +436,7 @@ router.post('/invoices', async (req: AuthenticatedRequest, res) => {
       templateName: 'manual_invoice_issued',
       heading: `Invoice ${invoiceNumber}`,
       preheader: `Amount due: ${formatMoney(totalCents, 'USD')}`,
-      bodyHtml: `<p>Hello ${user.full_name},</p><p>Invoice <strong>${invoiceNumber}</strong> for <strong>${formatMoney(totalCents, 'USD')}</strong> is now available in your portal.</p>`,
+      bodyHtml: `<p>Hello ${escapeHtml(user.full_name)},</p><p>Invoice <strong>${escapeHtml(invoiceNumber)}</strong> for <strong>${escapeHtml(formatMoney(totalCents, 'USD'))}</strong> is now available in your portal.</p>`,
     });
   }
 
@@ -518,7 +526,7 @@ router.post('/invoices/:id/resend', async (req: AuthenticatedRequest, res) => {
     templateName: 'invoice_resent',
     heading: `Invoice ${inv.invoice_number}`,
     preheader: `Status: ${inv.status} · Total: ${formatMoney(inv.total_cents, inv.currency)}`,
-    bodyHtml: `<p>Hello ${inv.full_name},</p><p>Here is a copy reminder for invoice <strong>${inv.invoice_number}</strong> (${inv.status}) totaling <strong>${formatMoney(inv.total_cents, inv.currency)}</strong>.</p>`,
+    bodyHtml: `<p>Hello ${escapeHtml(inv.full_name)},</p><p>Here is a copy reminder for invoice <strong>${escapeHtml(inv.invoice_number)}</strong> (${escapeHtml(inv.status)}) totaling <strong>${escapeHtml(formatMoney(inv.total_cents, inv.currency))}</strong>.</p>`,
   });
   res.json({ ok: true });
 });
@@ -670,8 +678,8 @@ router.post('/payments/:id/review', async (req: AuthenticatedRequest, res) => {
     heading: approved ? 'Payment Confirmed' : 'Payment Verification Rejected',
     preheader: `Invoice ${payment.invoice_number} — ${formatMoney(payment.amount_cents, payment.currency)}`,
     bodyHtml: approved
-      ? `<p>Hello ${payment.full_name},</p><p>Your payment (${payment.payment_number}) for invoice <strong>${payment.invoice_number}</strong> totaling <strong>${formatMoney(payment.amount_cents, payment.currency)}</strong> has been verified. Your invoice is now marked <strong>Paid</strong>.</p>`
-      : `<p>Hello ${payment.full_name},</p><p>Your payment submission (${payment.payment_number}) for invoice <strong>${payment.invoice_number}</strong> could not be verified.</p><p><strong>Reason:</strong> ${note || 'Invalid or unreadable proof of transfer.'}</p>`,
+      ? `<p>Hello ${escapeHtml(payment.full_name)},</p><p>Your payment (${escapeHtml(payment.payment_number)}) for invoice <strong>${escapeHtml(payment.invoice_number)}</strong> totaling <strong>${escapeHtml(formatMoney(payment.amount_cents, payment.currency))}</strong> has been verified. Your invoice is now marked <strong>Paid</strong>.</p>`
+      : `<p>Hello ${escapeHtml(payment.full_name)},</p><p>Your payment submission (${escapeHtml(payment.payment_number)}) for invoice <strong>${escapeHtml(payment.invoice_number)}</strong> could not be verified.</p><p><strong>Reason:</strong> ${escapeHtml(note || 'Invalid or unreadable proof of transfer.')}</p>`,
   });
 
   await sendDiscordWebhook({
@@ -1011,7 +1019,7 @@ router.post('/tickets/:id/reply', async (req: AuthenticatedRequest, res) => {
     templateName: 'ticket_reply',
     heading: `Support Update — ${ticket.ticket_number}`,
     preheader: message.slice(0, 90),
-    bodyHtml: `<p>Hello ${ticket.full_name},</p><p>A HelzerX specialist has replied to your ticket <strong>${ticket.ticket_number}</strong>:</p><blockquote style="border-left:2px solid #EA580C;padding-left:12px;color:#E4E4E7;">${message}</blockquote>`,
+    bodyHtml: `<p>Hello ${escapeHtml(ticket.full_name)},</p><p>A HelzerX specialist has replied to your ticket <strong>${escapeHtml(ticket.ticket_number)}</strong>:</p><blockquote style="border-left:2px solid #EA580C;padding-left:12px;color:#E4E4E7;">${escapeHtml(message)}</blockquote>`,
   });
 
   res.status(201).json({ ok: true });
@@ -1070,6 +1078,50 @@ router.get('/audit-logs', (_req, res) => {
 router.get('/email-logs', (_req, res) => {
   const emails = db.prepare('SELECT * FROM email_logs ORDER BY created_at DESC LIMIT 80').all();
   res.json({ emails });
+});
+
+// Security & Intrusion Monitoring
+router.get('/security', (_req, res) => {
+  const loginEvents = db
+    .prepare(`
+      SELECT l.*, u.customer_code, u.full_name
+      FROM login_history l
+      LEFT JOIN users u ON u.id = l.user_id
+      ORDER BY l.created_at DESC
+      LIMIT 60
+    `)
+    .all();
+
+  const lockedAccounts = db
+    .prepare(`
+      SELECT id, customer_code, email, full_name, role, failed_login_attempts, locked_until, last_login_ip, last_login_at
+      FROM users
+      WHERE failed_login_attempts > 0 OR (locked_until IS NOT NULL AND locked_until > datetime('now'))
+      ORDER BY locked_until DESC, failed_login_attempts DESC
+    `)
+    .all();
+
+  res.json({ login_events: loginEvents, locked_accounts: lockedAccounts });
+});
+
+router.post('/customers/:id/unlock', (req: AuthenticatedRequest, res) => {
+  const cid = Number(req.params.id);
+  const existing = db.prepare('SELECT id, customer_code, email FROM users WHERE id = ?').get(cid) as any;
+  if (!existing) {
+    res.status(404).json({ error: 'Account not found.' });
+    return;
+  }
+
+  db.prepare("UPDATE users SET failed_login_attempts = 0, locked_until = NULL, updated_at = datetime('now') WHERE id = ?").run(cid);
+  logActivity({
+    userId: cid,
+    actorUserId: req.user!.id,
+    action: 'admin_account_unlocked',
+    entityType: 'user',
+    entityId: existing.customer_code,
+    ipAddress: getClientIp(req),
+  });
+  res.json({ ok: true });
 });
 
 function sanitizeCsvCell(value: unknown): string {

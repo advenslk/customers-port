@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { Check, FileText, ShieldAlert, Tag, X } from 'lucide-react';
 import { Product, UserProfile } from '../types';
-import { apiFetch, downloadInvoicePdf, formatCurrency } from '../lib/api';
+import { apiFetch, downloadInvoicePdf, evaluatePasswordStrength, fetchAuthChallenge, formatCurrency } from '../lib/api';
+import { PasswordStrengthField } from './PasswordStrengthField';
 
 interface CheckoutSectionProps {
   products: Product[];
@@ -137,14 +139,20 @@ export function CheckoutSection({
       onNotify('error', 'Please accept Terms & Conditions, Privacy Policy, and Refund Policy.');
       return;
     }
+    if (!user && !evaluatePasswordStrength(password).isValid) {
+      onNotify('error', 'Account password must be at least 12 characters with uppercase, lowercase, number, and symbol.');
+      return;
+    }
     setSubmitting(true);
     try {
+      const challenge_token = !user ? await fetchAuthChallenge() : undefined;
       const result = await apiFetch<any>('/api/checkout', {
         method: 'POST',
         body: JSON.stringify({
           full_name: fullName,
           email,
           password: user ? undefined : password,
+          challenge_token,
           mobile,
           country,
           city,
@@ -196,11 +204,11 @@ export function CheckoutSection({
       <form onSubmit={handleSubmitOrder} className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Left 8 Columns: Customer + Order Forms */}
         <div className="lg:col-span-8 space-y-8">
-          {/* Step 1: Personal & Billing Information */}
-          <div className="bg-[#0D0D11] border border-white/10 rounded-2xl p-6 md:p-8">
+          {/* Step 1: Personal & Billing Details */}
+          <div className="bg-[#0D0D11] border border-white/10 rounded-2xl p-6 md:p-8 hx-card-3d">
             <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/10">
               <div>
-                <h3 className="font-display text-lg font-semibold text-white">01. Personal &amp; Billing Information</h3>
+                <h3 className="font-display text-lg font-semibold text-white">Personal &amp; Billing Details</h3>
                 <p className="text-xs text-zinc-400 mt-0.5">
                   {user ? `Signed in as ${user.customer_code} (${user.email})` : 'New customers are automatically registered with a unique Customer ID.'}
                 </p>
@@ -210,16 +218,20 @@ export function CheckoutSection({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1.5">Full Name *</label>
-                <input required value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Ana Morales" className="w-full px-3.5 py-2.5 text-sm bg-[#070709] border border-white/15 rounded-lg text-white focus:outline-none focus:border-orange-500" />
+                <input required value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Full Legal Name" className="w-full px-3.5 py-2.5 text-sm bg-[#070709] border border-white/15 rounded-xl text-white transition-colors focus:outline-none focus:border-orange-500" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1.5">Email Address *</label>
-                <input type="email" required disabled={Boolean(user)} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ana@company.com" className="w-full px-3.5 py-2.5 text-sm bg-[#070709] border border-white/15 rounded-lg text-white disabled:opacity-60 focus:outline-none focus:border-orange-500" />
+                <input type="email" required disabled={Boolean(user)} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="billing@company.com" className="w-full px-3.5 py-2.5 text-sm bg-[#070709] border border-white/15 rounded-xl text-white disabled:opacity-60 transition-colors focus:outline-none focus:border-orange-500" />
               </div>
               {!user && (
                 <div className="md:col-span-2">
-                  <label className="block text-xs font-medium text-zinc-300 mb-1.5">Account Password (min 8 characters) *</label>
-                  <input type="password" minLength={8} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Create a secure portal password" className="w-full px-3.5 py-2.5 text-sm bg-[#070709] border border-white/15 rounded-lg text-white focus:outline-none focus:border-orange-500" />
+                  <PasswordStrengthField
+                    label="Account Password *"
+                    value={password}
+                    onChange={setPassword}
+                    placeholder="Create a strong account password"
+                  />
                 </div>
               )}
               <div>
@@ -254,10 +266,10 @@ export function CheckoutSection({
           </div>
 
           {/* Step 2: Order & Service Configuration */}
-          <div className="bg-[#0D0D11] border border-white/10 rounded-2xl p-6 md:p-8">
+          <div className="bg-[#0D0D11] border border-white/10 rounded-2xl p-6 md:p-8 hx-card-3d">
             <div className="mb-6 pb-4 border-b border-white/10">
-              <h3 className="font-display text-lg font-semibold text-white">02. Order &amp; Service Configuration</h3>
-              <p className="text-xs text-zinc-400 mt-0.5">Select your product tier, subscription duration, and deployment specifications.</p>
+              <h3 className="font-display text-lg font-semibold text-white">Service &amp; Package Configuration</h3>
+              <p className="text-xs text-zinc-400 mt-0.5">Select your service tier, subscription duration, and deployment preferences.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -330,8 +342,8 @@ export function CheckoutSection({
                   rows={2}
                   value={requirements}
                   onChange={(e) => setRequirements(e.target.value)}
-                  placeholder="Preferred deployment region, OS image, domain bindings, or architecture constraints..."
-                  className="w-full px-3.5 py-2.5 text-sm bg-[#070709] border border-white/15 rounded-lg text-white focus:outline-none focus:border-orange-500"
+                  placeholder="Share your preferred region, configuration goals, or setup notes..."
+                  className="w-full px-3.5 py-2.5 text-sm bg-[#070709] border border-white/15 rounded-xl text-white transition-colors focus:outline-none focus:border-orange-500"
                 />
               </div>
               <div className="md:col-span-2">
@@ -340,8 +352,8 @@ export function CheckoutSection({
                   rows={2}
                   value={specialInstructions}
                   onChange={(e) => setSpecialInstructions(e.target.value)}
-                  placeholder="PO number, finance department notes, or tax VAT ID..."
-                  className="w-full px-3.5 py-2.5 text-sm bg-[#070709] border border-white/15 rounded-lg text-white focus:outline-none focus:border-orange-500"
+                  placeholder="Billing reference, finance department notes, or tax registration number..."
+                  className="w-full px-3.5 py-2.5 text-sm bg-[#070709] border border-white/15 rounded-xl text-white transition-colors focus:outline-none focus:border-orange-500"
                 />
               </div>
             </div>
@@ -350,7 +362,7 @@ export function CheckoutSection({
 
         {/* Right 4 Columns: Summary, Promo, Payment Method, Legal Consent */}
         <div className="lg:col-span-4 space-y-6 lg:sticky lg:top-24">
-          <div className="bg-[#0D0D11] border border-white/15 rounded-2xl p-6 space-y-5">
+          <div className="bg-[#0D0D11] border border-white/15 rounded-2xl p-6 space-y-5 hx-card-3d">
             <div className="flex items-center justify-between pb-4 border-b border-white/10">
               <h3 className="font-display text-lg font-semibold text-white">Order Summary</h3>
               <FileText className="w-4 h-4 text-orange-400" />
@@ -367,15 +379,15 @@ export function CheckoutSection({
 
             {/* Promo Code */}
             <div>
-              <label className="block text-xs text-zinc-400 mb-1.5">Promo Code (try HELZERX15)</label>
+              <label className="block text-xs text-zinc-400 mb-1.5">Promo Code</label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
                   <Tag className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-3" />
                   <input
                     value={promoCodeInput}
                     onChange={(e) => setPromoCodeInput(e.target.value.toUpperCase())}
-                    placeholder="HELZERX15"
-                    className="w-full pl-8 pr-3 py-2 text-xs font-mono uppercase bg-[#070709] border border-white/15 rounded-lg text-white focus:outline-none focus:border-orange-500"
+                    placeholder="Enter promo code"
+                    className="w-full pl-8 pr-3 py-2 text-xs font-mono uppercase bg-[#070709] border border-white/15 rounded-xl text-white focus:outline-none focus:border-orange-500"
                   />
                 </div>
                 <button
@@ -479,27 +491,40 @@ export function CheckoutSection({
         </div>
       </form>
 
-      {policyModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-[#0D0D11] border border-white/15 rounded-2xl p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h4 className="font-display text-lg font-bold text-white">{POLICY_DOCS[policyModal].title}</h4>
-              <button onClick={() => setPolicyModal(null)} className="p-1.5 text-zinc-400 hover:text-white">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-sm text-zinc-300 leading-relaxed">{POLICY_DOCS[policyModal].body}</p>
-            <div className="flex justify-end">
-              <button
-                onClick={() => setPolicyModal(null)}
-                className="px-4 py-2 text-xs font-semibold bg-orange-600 hover:bg-orange-500 text-white rounded-lg"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AnimatePresence>
+        {policyModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              transition={{ duration: 0.2 }}
+              className="w-full max-w-lg bg-[#0D0D11] border border-white/15 rounded-2xl p-6 space-y-4 shadow-2xl"
+            >
+              <div className="flex items-center justify-between">
+                <h4 className="font-display text-lg font-bold text-white">{POLICY_DOCS[policyModal].title}</h4>
+                <button onClick={() => setPolicyModal(null)} className="p-1.5 text-zinc-400 hover:text-white transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <p className="text-sm text-zinc-300 leading-relaxed">{POLICY_DOCS[policyModal].body}</p>
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setPolicyModal(null)}
+                  className="px-4 py-2 text-xs font-semibold bg-orange-600 hover:bg-orange-500 text-white rounded-lg transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </section>
   );
 }

@@ -14,6 +14,7 @@ import customerRoutes from './server/routes/customer';
 import adminRoutes from './server/routes/admin';
 import { createInAppNotification, sendDiscordWebhook, sendTransactionalEmail } from './server/services/notifications';
 import { formatMoney } from './server/services/pdfInvoice';
+import { escapeHtml, verifyCsrfMiddleware } from './server/services/security';
 
 runMigrations();
 seedInitialData();
@@ -28,6 +29,8 @@ app.use(
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
     frameguard: false,
+    noSniff: true,
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   })
 );
 
@@ -125,7 +128,7 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
             templateName: 'stripe_payment_confirmed',
             heading: 'Stripe Payment Confirmed',
             preheader: `Invoice ${inv.invoice_number} is Paid.`,
-            bodyHtml: `<p>Hello ${inv.full_name},</p><p>Your Stripe payment for invoice <strong>${inv.invoice_number}</strong> (${formatMoney(inv.total_cents, inv.currency)}) is confirmed.</p>`,
+            bodyHtml: `<p>Hello ${escapeHtml(inv.full_name)},</p><p>Your Stripe payment for invoice <strong>${escapeHtml(inv.invoice_number)}</strong> (${escapeHtml(formatMoney(inv.total_cents, inv.currency))}) is confirmed.</p>`,
           });
 
           await sendDiscordWebhook({
@@ -148,19 +151,32 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-const authLimiter = rateLimit({
+const strictAuthLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 60,
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Too many authentication attempts. Please try again shortly.' },
+  message: { error: 'Too many security attempts. Please wait 15 minutes before retrying.' },
+});
+
+const generalApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Rate limit exceeded. Please slow down.' },
 });
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', service: 'helzerx-customer-portal' });
 });
 
-app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api', generalApiLimiter, verifyCsrfMiddleware);
+app.use('/api/auth/login', strictAuthLimiter);
+app.use('/api/auth/register', strictAuthLimiter);
+app.use('/api/auth/forgot-password', strictAuthLimiter);
+app.use('/api/auth/bootstrap-admin', strictAuthLimiter);
+app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', catalogRoutes);
 app.use('/api', customerRoutes);

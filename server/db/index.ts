@@ -195,23 +195,13 @@ export function seedInitialData(): void {
     insertPkg.run(p4, 'Quarter Retainer (160 Hours)', 'quarterly', 90, 1680000, 'USD', JSON.stringify(['160 Engineering Hours', 'Priority SLA', 'Dedicated QA & Security Review']));
   }
 
-  // Seed Promo Codes if empty
-  const couponCount = (db.prepare('SELECT COUNT(*) as cnt FROM coupons').get() as { cnt: number }).cnt;
-  if (couponCount === 0) {
-    db.prepare(
-      'INSERT INTO coupons (code, discount_type, discount_value, min_purchase_cents, max_uses, expires_at, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)'
-    ).run('HELZERX15', 'percentage', 15, 20000, 100, '2027-12-31T23:59:59Z');
-    db.prepare(
-      'INSERT INTO coupons (code, discount_type, discount_value, min_purchase_cents, max_uses, expires_at, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)'
-    ).run('WELCOME100', 'fixed', 10000, 25000, 250, '2027-12-31T23:59:59Z');
-  }
+  // Bootstrap initial Super Admin strictly from environment variables if configured and no admin exists yet
+  const adminCount = (db.prepare("SELECT COUNT(*) as cnt FROM users WHERE role IN ('admin', 'super_admin')").get() as { cnt: number }).cnt;
+  const envAdminEmail = process.env.ADMIN_BOOTSTRAP_EMAIL?.trim().toLowerCase();
+  const envAdminPass = process.env.ADMIN_BOOTSTRAP_PASSWORD;
 
-  // Seed Admin & Demo Customer if no users exist
-  const userCount = (db.prepare('SELECT COUNT(*) as cnt FROM users').get() as { cnt: number }).cnt;
-  if (userCount === 0) {
-    const adminEmail = process.env.ADMIN_BOOTSTRAP_EMAIL || 'admin@helzerx.cyou';
-    const adminPass = process.env.ADMIN_BOOTSTRAP_PASSWORD || 'HelzerX!Admin2026';
-    const adminHash = bcrypt.hashSync(adminPass, 10);
+  if (adminCount === 0 && envAdminEmail && envAdminPass && envAdminPass.length >= 12) {
+    const adminHash = bcrypt.hashSync(envAdminPass, 12);
     const adminCode = generateCustomerCode();
 
     db.prepare(`
@@ -221,126 +211,17 @@ export function seedInitialData(): void {
       ) VALUES (?, ?, ?, 'super_admin', ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active')
     `).run(
       adminCode,
-      adminEmail,
+      envAdminEmail,
       adminHash,
-      'Marcus Vance',
-      '+1 (415) 890-4401',
+      'HelzerX Super Admin',
+      '',
       'United States',
       'San Francisco',
       '548 Market Street, Suite 74200',
       '94104',
       'HelzerX Technologies',
-      'helzerx_admin'
+      ''
     );
-
-    // Seed an active demo enterprise customer with a real order + invoice + service so evaluators can test immediately
-    const custHash = bcrypt.hashSync('Customer!2026', 10);
-    const custCode = generateCustomerCode();
-    const custId = db.prepare(`
-      INSERT INTO users (
-        customer_code, email, password_hash, role, full_name, mobile, country, city,
-        billing_address, postal_code, company_name, discord_username, email_verified, status
-      ) VALUES (?, ?, ?, 'customer', ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active')
-    `).run(
-      custCode,
-      'ana.morales@solcraft.mx',
-      custHash,
-      'Ana Morales',
-      '+52 55 4123 9876',
-      'Mexico',
-      'CDMX',
-      'Av. Reforma 222, Juárez',
-      '06600',
-      'Solcraft Studio S.A.',
-      'anamorales_dev'
-    ).lastInsertRowid as number;
-
-    db.prepare(`
-      INSERT INTO billing_addresses (user_id, label, full_name, company_name, address_line, city, postal_code, country, is_default)
-      VALUES (?, 'Primary HQ', 'Ana Morales', 'Solcraft Studio S.A.', 'Av. Reforma 222, Juárez', 'CDMX', '06600', 'Mexico', 1)
-    `).run(custId);
-
-    // Seed 1 historical Paid order + invoice + active service and 1 Unpaid order + invoice
-    const orderNum1 = generateOrderNumber();
-    const invNum1 = generateInvoiceNumber();
-    const payNum1 = generatePaymentNumber();
-    const txnCode1 = generateTransactionCode();
-    const svcCode1 = generateServiceCode();
-    const nowIso = new Date().toISOString();
-    const nextYearIso = new Date(Date.now() + 365 * 86400 * 1000).toISOString();
-
-    const billingSnap = JSON.stringify({
-      full_name: 'Ana Morales',
-      company_name: 'Solcraft Studio S.A.',
-      email: 'ana.morales@solcraft.mx',
-      mobile: '+52 55 4123 9876',
-      billing_address: 'Av. Reforma 222, Juárez',
-      city: 'CDMX',
-      postal_code: '06600',
-      country: 'Mexico',
-    });
-
-    const ord1Id = db.prepare(`
-      INSERT INTO orders (
-        order_number, user_id, status, subtotal_cents, discount_cents, tax_cents, total_cents, currency,
-        billing_snapshot_json, requirements, special_instructions, accepted_terms_at, accepted_privacy_at, accepted_refund_at
-      ) VALUES (?, ?, 'Completed', 58000, 0, 4930, 62930, 'USD', ?, 'US-West NVMe cluster with WireGuard mesh', 'Deploy with Ubuntu 24.04 LTS', ?, ?, ?)
-    `).run(orderNum1, custId, billingSnap, nowIso, nowIso, nowIso).lastInsertRowid as number;
-
-    db.prepare(`
-      INSERT INTO order_items (order_id, product_id, package_id, product_name, package_name, subscription_duration, quantity, unit_price_cents, line_total_cents)
-      VALUES (?, 1, 2, 'HelzerX Core Cluster', 'Growth Cluster (16 vCPU / 64GB)', 'Monthly (30 Days)', 1, 58000, 58000)
-    `).run(ord1Id);
-
-    db.prepare(`INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES (?, NULL, 'Order Submitted', 'Order submitted via Customer Portal')`).run(ord1Id);
-    db.prepare(`INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES (?, 'Order Submitted', 'Payment Confirmed', 'Bank wire verified by finance')`).run(ord1Id);
-    db.prepare(`INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES (?, 'Payment Confirmed', 'Completed', 'Cluster provisioned and handed over')`).run(ord1Id);
-
-    const inv1Id = db.prepare(`
-      INSERT INTO invoices (
-        invoice_number, order_id, user_id, status, issue_date, due_date, subtotal_cents, discount_cents,
-        tax_rate_bps, tax_cents, total_cents, currency, payment_method, billing_snapshot_json, notes, paid_at
-      ) VALUES (?, ?, ?, 'Paid', ?, ?, 58000, 0, 850, 4930, 62930, 'USD', 'Bank Transfer', ?, 'Thank you for your business!', ?)
-    `).run(invNum1, ord1Id, custId, nowIso, nowIso, billingSnap, nowIso).lastInsertRowid as number;
-
-    db.prepare(`
-      INSERT INTO invoice_items (invoice_id, description, quantity, unit_price_cents, amount_cents)
-      VALUES (?, 'HelzerX Core Cluster — Growth Cluster (16 vCPU / 64GB)', 1, 58000, 58000)
-    `).run(inv1Id);
-
-    const pay1Id = db.prepare(`
-      INSERT INTO payments (
-        payment_number, invoice_id, order_id, user_id, method, amount_cents, currency, status, transaction_ref, reviewed_at
-      ) VALUES (?, ?, ?, ?, 'Bank Transfer', 62930, 'USD', 'Verified', 'WIRE-2026-994120', ?)
-    `).run(payNum1, inv1Id, ord1Id, custId, nowIso).lastInsertRowid as number;
-
-    db.prepare(`
-      INSERT INTO transactions (transaction_code, payment_id, invoice_id, user_id, type, amount_cents, currency, status)
-      VALUES (?, ?, ?, ?, 'manual_settlement', 62930, 'USD', 'Completed')
-    `).run(txnCode1, pay1Id, inv1Id, custId);
-
-    db.prepare(`
-      INSERT INTO services (
-        service_code, user_id, order_id, product_id, package_id, product_name, package_name,
-        status, started_at, expires_at, auto_renew, endpoint_info
-      ) VALUES (?, ?, ?, 1, 2, 'HelzerX Core Cluster', 'Growth Cluster (16 vCPU / 64GB)', 'Active', ?, ?, 1, 'node-usw2-04.helzerx.cyou · 10Gbps')
-    `).run(svcCode1, custId, ord1Id, nowIso, nextYearIso);
-
-    // Seed an initial support ticket
-    const tktNum = generateTicketNumber();
-    const tktId = db.prepare(`
-      INSERT INTO support_tickets (ticket_number, user_id, order_id, subject, category, priority, status)
-      VALUES (?, ?, ?, 'WireGuard Peer IP Whitelist Request', 'Infrastructure & Networking', 'Normal', 'In Progress')
-    `).run(tktNum, custId, ord1Id).lastInsertRowid as number;
-
-    db.prepare(`
-      INSERT INTO ticket_messages (ticket_id, sender_user_id, sender_role, message)
-      VALUES (?, ?, 'customer', 'Please add our Mexico City office gateway (187.190.44.12/32) to the WireGuard ACL for node-usw2-04.')
-    `).run(tktId, custId);
-
-    db.prepare(`
-      INSERT INTO notifications (user_id, title, message, category, link_target)
-      VALUES (?, 'Welcome to HelzerX Customer Portal', 'Your account HX-CUST-0002 is verified and Growth Cluster is active.', 'system', 'overview')
-    `).run(custId);
   }
 }
+

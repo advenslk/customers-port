@@ -1,10 +1,31 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import jwt from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
 import { db } from '../db';
 
-const JWT_SECRET = process.env.JWT_SECRET || crypto.createHash('sha256').update('helzerx-dev-fallback-secret-change-in-prod').digest('hex');
+function resolveJwtSecret(): string {
+  if (process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 32) {
+    return process.env.JWT_SECRET;
+  }
+  const secretFile = path.resolve(process.cwd(), 'data', '.jwt_secret');
+  const dir = path.dirname(secretFile);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  if (fs.existsSync(secretFile)) {
+    const existing = fs.readFileSync(secretFile, 'utf8').trim();
+    if (existing.length >= 64) return existing;
+  }
+  const generated = crypto.randomBytes(64).toString('hex');
+  fs.writeFileSync(secretFile, generated, { mode: 0o600 });
+  return generated;
+}
+
+export const JWT_SECRET = resolveJwtSecret();
 export const SESSION_COOKIE_NAME = 'hx_session';
+export const CSRF_COOKIE_NAME = 'hx_csrf';
 
 export interface AuthUser {
   id: number;
@@ -20,6 +41,24 @@ export interface AuthenticatedRequest extends Request {
   sessionJti?: string;
 }
 
+export function sha256(input: string): string {
+  return crypto.createHash('sha256').update(input).digest('hex');
+}
+
+export function computeSessionFingerprint(req: Request): string {
+  const ua = String(req.headers['user-agent'] || '');
+  return sha256(ua);
+}
+
+export function escapeHtml(str: string): string {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function signSessionToken(user: AuthUser, jti: string): string {
   return jwt.sign(
     {
@@ -30,7 +69,7 @@ export function signSessionToken(user: AuthUser, jti: string): string {
       jti,
     },
     JWT_SECRET,
-    { expiresIn: '7d' }
+    { expiresIn: '24h', algorithm: 'HS256' }
   );
 }
 
@@ -40,13 +79,172 @@ export function setSessionCookie(res: Response, token: string): void {
     httpOnly: true,
     sameSite: 'lax',
     secure: isProd,
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+    maxAge: 24 * 60 * 60 * 1000,
     path: '/',
   });
 }
 
 export function clearSessionCookie(res: Response): void {
   res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
+}
+
+export function issueCsrfToken(res: Response): string {
+  const token = crypto.randomBytes(32).toString('hex');
+  const isProd = process.env.NODE_ENV === 'production';
+  res.cookie(CSRF_COOKIE_NAME, token, {
+    httpOnly: false, // readable by SPA to reflect in X-CSRF-Token header
+    sameSite: 'lax',
+    secure: isProd,
+    maxAge: 24 * 60 * 60 * 1000,
+    path: '/',
+  });
+  return token;
+}
+
+export function verifyCsrfMiddleware(req: Request, res: Response, next: NextFunction): void {
+  const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
+  if (safeMethods.has(req.method)) {
+    next();
+    return;
+  }
+
+  // Stripe webhooks authenticate via Stripe HMAC signature
+  if (req.path === '/webhooks/stripe' || req.originalUrl === '/api/webhooks/stripe') {
+    next();
+    return;
+  }
+
+  const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
+  const headerToken = req.headers['x-csrf-token'];
+
+  if (typeof cookieToken !== 'string' || typeof headerToken !== 'string' || cookieToken.length < 32 || headerToken.length < 32) {
+    res.status(403).json({ error: 'Security token missing or expired. Please refresh and try again.' });
+    return;
+  }
+
+  const a = Buffer.from(cookieToken);
+  const b = Buffer.from(headerToken);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    res.status(403).json({ error: 'CSRF validation failed.' });
+    return;
+  }
+
+  next();
+}
+
+/**
+ * Signed anti-automation challenge for login, registration, password reset, and checkout
+ */
+export function createAuthChallenge(): string {
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const issuedAt = Date.now();
+  const payload = `${nonce}.${issuedAt}`;
+  const sig = crypto.createHmac('sha256', JWT_SECRET).update(payload).digest('hex');
+  return `${payload}.${sig}`;
+}
+
+export function verifyAuthChallenge(token: unknown): boolean {
+  if (typeof token !== 'string') return false;
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  const [nonce, issuedAtStr, sig] = parts;
+  if (!nonce || !issuedAtStr || !sig) return false;
+
+  const issuedAt = Number(issuedAtStr);
+  if (!Number.isFinite(issuedAt)) return false;
+
+  const ageMs = Date.now() - issuedAt;
+  // Valid for 15 minutes
+  if (ageMs < 0 || ageMs > 15 * 60 * 1000) return false;
+
+  const expectedSig = crypto.createHmac('sha256', JWT_SECRET).update(`${nonce}.${issuedAtStr}`).digest('hex');
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expectedSig);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+const COMMON_WEAK_PASSWORDS = new Set([
+  'password1234',
+  'admin1234567',
+  'qwerty123456',
+  '123456789012',
+  'helzerx12345',
+  'welcome12345',
+  'letmein12345',
+]);
+
+export function validateStrongPassword(password: string, context: { email?: string; fullName?: string } = {}): string | null {
+  if (password.length < 12) {
+    return 'Password must be at least 12 characters long.';
+  }
+  if (password.length > 128) {
+    return 'Password must not exceed 128 characters.';
+  }
+  if (!/[A-Z]/.test(password)) {
+    return 'Password must include at least one uppercase letter.';
+  }
+  if (!/[a-z]/.test(password)) {
+    return 'Password must include at least one lowercase letter.';
+  }
+  if (!/[0-9]/.test(password)) {
+    return 'Password must include at least one number.';
+  }
+  if (!/[^A-Za-z0-9]/.test(password)) {
+    return 'Password must include at least one special character (e.g. !@#$%^&*).';
+  }
+  const lower = password.toLowerCase();
+  if (COMMON_WEAK_PASSWORDS.has(lower)) {
+    return 'Password is too common. Choose a unique passphrase.';
+  }
+  if (context.email) {
+    const localPart = context.email.split('@')[0]?.toLowerCase();
+    if (localPart && localPart.length >= 4 && lower.includes(localPart)) {
+      return 'Password must not contain your email username.';
+    }
+  }
+  if (context.fullName) {
+    const tokens = context.fullName.toLowerCase().split(/\s+/).filter((t) => t.length >= 4);
+    for (const tok of tokens) {
+      if (lower.includes(tok)) {
+        return 'Password must not contain your name.';
+      }
+    }
+  }
+  return null;
+}
+
+export function validateUploadedFileMagicBytes(filePath: string, mimeType: string): boolean {
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(12);
+    const bytesRead = fs.readSync(fd, buf, 0, 12, 0);
+    fs.closeSync(fd);
+
+    if (bytesRead < 4) return false;
+
+    if (mimeType === 'image/jpeg') {
+      return buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+    }
+    if (mimeType === 'image/png') {
+      return buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+    }
+    if (mimeType === 'image/webp') {
+      return buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP';
+    }
+    if (mimeType === 'application/pdf') {
+      return buf.subarray(0, 4).toString('ascii') === '%PDF';
+    }
+    if (mimeType === 'text/plain') {
+      // Ensure no null bytes in plain text
+      for (let i = 0; i < bytesRead; i++) {
+        if (buf[i] === 0x00) return false;
+      }
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 export function getClientIp(req: Request): string {
@@ -89,7 +287,11 @@ export function sanitizeUser(row: any) {
   const {
     password_hash: _ph,
     two_factor_secret: _tfs,
+    two_factor_recovery_codes_json: _rc,
     verification_token: _vt,
+    verification_expires_at: _ve,
+    failed_login_attempts: _fla,
+    locked_until: _lu,
     ...safe
   } = row;
   return {
@@ -109,7 +311,7 @@ export function requireAuth(req: AuthenticatedRequest, res: Response, next: Next
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as unknown as { sub: number; jti: string };
+    const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }) as unknown as { sub: number; jti: string };
     const session = db
       .prepare("SELECT * FROM sessions WHERE token_jti = ? AND revoked_at IS NULL AND expires_at > datetime('now')")
       .get(decoded.jti) as any;
@@ -117,6 +319,15 @@ export function requireAuth(req: AuthenticatedRequest, res: Response, next: Next
     if (!session) {
       clearSessionCookie(res);
       res.status(401).json({ error: 'Session expired or revoked' });
+      return;
+    }
+
+    // Bind session to User-Agent fingerprint to block hijacked cookie replay across devices
+    const currentFp = computeSessionFingerprint(req);
+    if (session.session_fingerprint && session.session_fingerprint !== currentFp) {
+      db.prepare("UPDATE sessions SET revoked_at = datetime('now') WHERE id = ?").run(session.id);
+      clearSessionCookie(res);
+      res.status(401).json({ error: 'Session device mismatch. Please sign in again.' });
       return;
     }
 
@@ -164,7 +375,7 @@ function extractBearer(req: Request): string | null {
 }
 
 /**
- * RFC 6238 TOTP Two-Factor Authentication helpers (Base32 + HMAC-SHA1)
+ * RFC 6238 TOTP Two-Factor Authentication + Single-Use Recovery Codes
  */
 const BASE32_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
@@ -214,4 +425,38 @@ export function verifyTotpCode(secret: string, token: string): boolean {
     if (generateTotpCode(secret, offset) === clean) return true;
   }
   return false;
+}
+
+export function generateRecoveryCodes(count = 8): { plainCodes: string[]; hashedCodes: string[] } {
+  const plainCodes: string[] = [];
+  const hashedCodes: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const part1 = crypto.randomBytes(2).toString('hex').toUpperCase();
+    const part2 = crypto.randomBytes(2).toString('hex').toUpperCase();
+    const code = `${part1}-${part2}`;
+    plainCodes.push(code);
+    hashedCodes.push(sha256(code));
+  }
+  return { plainCodes, hashedCodes };
+}
+
+export function consumeRecoveryCode(userId: number, submittedCode: string): boolean {
+  const clean = submittedCode.trim().toUpperCase();
+  if (!/^[A-F0-9]{4}-[A-F0-9]{4}$/.test(clean)) return false;
+  const row = db.prepare('SELECT two_factor_recovery_codes_json FROM users WHERE id = ?').get(userId) as
+    | { two_factor_recovery_codes_json: string }
+    | undefined;
+  if (!row) return false;
+  let hashes: string[] = [];
+  try {
+    hashes = JSON.parse(row.two_factor_recovery_codes_json || '[]');
+  } catch {
+    return false;
+  }
+  const targetHash = sha256(clean);
+  const idx = hashes.indexOf(targetHash);
+  if (idx === -1) return false;
+  hashes.splice(idx, 1);
+  db.prepare('UPDATE users SET two_factor_recovery_codes_json = ? WHERE id = ?').run(JSON.stringify(hashes), userId);
+  return true;
 }

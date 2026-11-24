@@ -1,29 +1,65 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
-  FileText,
   Lock,
   Menu,
-  Server,
   ShieldCheck,
   X,
 } from 'lucide-react';
 import { Category, Invoice, Product, UserProfile } from './types';
-import { apiFetch, formatCurrency } from './lib/api';
-import { HelzerXLogoMark, HeroSculpturalPrism } from './components/HelzerXBrand';
-import { AuthModal } from './components/AuthModal';
+import { apiFetch, ensureCsrfToken, formatCurrency } from './lib/api';
+import {
+  HelzerXLogoMark,
+  Sculptural3DArrow,
+  Sculptural3DBust,
+  Sculptural3DCheck,
+  Sculptural3DGear,
+} from './components/HelzerXBrand';
+import { ThreePrismCanvas } from './components/ThreePrismCanvas';
+import { Tilt3DCard } from './components/Tilt3DCard';
+import { AuthMode, AuthPage } from './components/AuthPage';
 import { CheckoutSection } from './components/CheckoutSection';
 import { CustomerDashboard } from './components/CustomerDashboard';
 import { AdminDashboard } from './components/AdminDashboard';
 import { InvoiceModal } from './components/InvoiceModal';
 
-type AppView = 'storefront' | 'customer' | 'admin';
+type AppView = 'storefront' | 'auth' | 'customer' | 'admin';
+
+function resolveRouteFromPath(pathname: string): { view: AppView; authMode: AuthMode } {
+  const clean = pathname.toLowerCase().replace(/\/+$/, '') || '/';
+  if (clean === '/login') return { view: 'auth', authMode: 'login' };
+  if (clean === '/register') return { view: 'auth', authMode: 'register' };
+  if (clean === '/forgot-password') return { view: 'auth', authMode: 'forgot' };
+  if (clean === '/reset-password') return { view: 'auth', authMode: 'reset' };
+  if (clean === '/setup') return { view: 'auth', authMode: 'bootstrap' };
+  if (clean === '/portal') return { view: 'customer', authMode: 'login' };
+  if (clean === '/admin') return { view: 'admin', authMode: 'login' };
+  return { view: 'storefront', authMode: 'login' };
+}
+
+function routePathFor(view: AppView, authMode: AuthMode): string {
+  if (view === 'auth') {
+    if (authMode === 'register') return '/register';
+    if (authMode === 'forgot') return '/forgot-password';
+    if (authMode === 'reset') return '/reset-password';
+    if (authMode === 'bootstrap') return '/setup';
+    return '/login';
+  }
+  if (view === 'customer') return '/portal';
+  if (view === 'admin') return '/admin';
+  return '/';
+}
 
 export default function App() {
-  const [view, setView] = useState<AppView>('storefront');
+  const initialRoute = resolveRouteFromPath(window.location.pathname);
+  const [view, setView] = useState<AppView>(initialRoute.view);
+  const [authMode, setAuthMode] = useState<AuthMode>(initialRoute.authMode);
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [sessionChecked, setSessionChecked] = useState(false);
+
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [settings, setSettings] = useState<Record<string, string>>({});
@@ -31,10 +67,30 @@ export default function App() {
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   const [selectedPackageId, setSelectedPackageId] = useState<number | null>(null);
 
-  const [authModalMode, setAuthModalMode] = useState<'login' | 'register' | 'forgot' | null>(null);
+  const [needsAdminSetup, setNeedsAdminSetup] = useState(false);
   const [activeInvoice, setActiveInvoice] = useState<Invoice | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+
+  // 30-minute idle inactivity auto-logout (2-minute warning modal)
+  const [idleWarningSeconds, setIdleWarningSeconds] = useState<number | null>(null);
+  const lastActivityRef = useRef<number>(Date.now());
+
+  const navigate = (nextView: AppView, nextAuthMode: AuthMode = authMode, replace = false) => {
+    setView(nextView);
+    if (nextView === 'auth') {
+      setAuthMode(nextAuthMode);
+    }
+    const targetPath = routePathFor(nextView, nextAuthMode);
+    if (window.location.pathname !== targetPath) {
+      if (replace) {
+        window.history.replaceState({}, '', targetPath);
+      } else {
+        window.history.pushState({}, '', targetPath);
+      }
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const showToast = (type: 'success' | 'error', msg: string) => {
     setToast({ type, msg });
@@ -64,12 +120,25 @@ export default function App() {
       setUser(data.user);
     } catch {
       setUser(null);
+    } finally {
+      setSessionChecked(true);
+    }
+  };
+
+  const loadBootstrapStatus = async () => {
+    try {
+      const status = await apiFetch<{ needs_admin_setup: boolean }>('/api/auth/bootstrap-status');
+      setNeedsAdminSetup(Boolean(status.needs_admin_setup));
+    } catch {
+      setNeedsAdminSetup(false);
     }
   };
 
   useEffect(() => {
+    ensureCsrfToken().catch(() => {});
     loadCatalog();
     loadSession();
+    loadBootstrapStatus();
 
     const params = new URLSearchParams(window.location.search);
     const stripeStatus = params.get('stripe_status');
@@ -81,37 +150,102 @@ export default function App() {
       showToast('error', `Stripe checkout cancelled for ${invNum || 'invoice'}.`);
       window.history.replaceState({}, '', '/');
     }
+
+    const onPopState = () => {
+      const resolved = resolveRouteFromPath(window.location.pathname);
+      setView(resolved.view);
+      setAuthMode(resolved.authMode);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  const handleLogout = async () => {
+  // Guard protected routes when session check finishes
+  useEffect(() => {
+    if (!sessionChecked) return;
+    if ((view === 'customer' || view === 'admin') && !user) {
+      navigate('auth', 'login', true);
+    } else if (view === 'admin' && user && user.role !== 'admin' && user.role !== 'super_admin') {
+      navigate('customer', 'login', true);
+    } else if (view === 'auth' && user && authMode !== 'forgot' && authMode !== 'reset') {
+      const dest = user.role === 'admin' || user.role === 'super_admin' ? 'admin' : 'customer';
+      navigate(dest, 'login', true);
+    }
+  }, [sessionChecked, user, view, authMode]);
+
+  const handleLogout = async (reason?: string) => {
     try {
       await apiFetch('/api/auth/logout', { method: 'POST' });
     } catch {
       // ignore
     }
     setUser(null);
-    setView('storefront');
-    showToast('success', 'Signed out cleanly.');
+    setActiveInvoice(null);
+    setIdleWarningSeconds(null);
+    navigate('storefront', 'login', true);
+    showToast('success', reason || 'Signed out cleanly.');
+  };
+
+  useEffect(() => {
+    if (!user) {
+      setIdleWarningSeconds(null);
+      return;
+    }
+
+    lastActivityRef.current = Date.now();
+    const recordActivity = () => {
+      if (Date.now() - lastActivityRef.current < 28 * 60 * 1000) {
+        lastActivityRef.current = Date.now();
+      }
+    };
+
+    const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart'];
+    events.forEach((ev) => window.addEventListener(ev, recordActivity, { passive: true }));
+
+    const interval = window.setInterval(() => {
+      const elapsedMs = Date.now() - lastActivityRef.current;
+      const maxIdleMs = 30 * 60 * 1000;
+      const warnStartMs = 28 * 60 * 1000;
+
+      if (elapsedMs >= maxIdleMs) {
+        handleLogout('Session automatically closed after 30 minutes of inactivity.');
+      } else if (elapsedMs >= warnStartMs) {
+        setIdleWarningSeconds(Math.max(1, Math.ceil((maxIdleMs - elapsedMs) / 1000)));
+      } else {
+        setIdleWarningSeconds(null);
+      }
+    }, 1000);
+
+    return () => {
+      events.forEach((ev) => window.removeEventListener(ev, recordActivity));
+      window.clearInterval(interval);
+    };
+  }, [user?.id]);
+
+  const scrollToSection = (sectionId: string) => {
+    if (view !== 'storefront') {
+      navigate('storefront');
+      setTimeout(() => document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' }), 140);
+    } else {
+      document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
+    }
   };
 
   const handleSelectPackageAndScroll = (productId: number, packageId: number) => {
     setSelectedProductId(productId);
     setSelectedPackageId(packageId);
-    setView('storefront');
-    setTimeout(() => {
-      document.getElementById('checkout')?.scrollIntoView({ behavior: 'smooth' });
-    }, 80);
+    scrollToSection('checkout');
   };
 
   const handleOpenPortal = () => {
     if (!user) {
-      setAuthModalMode('login');
+      navigate('auth', 'login');
       return;
     }
     if (user.role === 'admin' || user.role === 'super_admin') {
-      setView('admin');
+      navigate('admin');
     } else {
-      setView('customer');
+      navigate('customer');
     }
   };
 
@@ -120,6 +254,21 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#070709] text-[#F5F5F7] flex flex-col">
+      {/* First-Time Administrator Setup Banner */}
+      {needsAdminSetup && !user && (
+        <div className="no-print bg-orange-950/80 border-b border-orange-500/35 px-4 py-2.5 text-center text-xs text-orange-100 flex flex-wrap items-center justify-center gap-3">
+          <ShieldCheck className="w-4 h-4 text-orange-400 shrink-0" />
+          <span>Welcome to HelzerX. Set up your primary administrator account to activate workspace controls.</span>
+          <button
+            type="button"
+            onClick={() => navigate('auth', 'bootstrap')}
+            className="px-3 py-1 rounded-md bg-orange-600 hover:bg-orange-500 text-white font-semibold whitespace-nowrap transition-colors"
+          >
+            Set Up Administrator
+          </button>
+        </div>
+      )}
+
       {/* Maintenance Notification Banner (if configured by Admin) */}
       {settings.maintenance_banner && (
         <div className="no-print bg-orange-950/80 border-b border-orange-500/30 px-4 py-2 text-center text-xs text-orange-200 flex items-center justify-center gap-2">
@@ -133,45 +282,49 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between gap-8">
           {/* Zone 1: Single-line Brand Wordmark */}
           <button
-            onClick={() => setView('storefront')}
+            onClick={() => navigate('storefront')}
             className="flex items-center gap-2.5 text-left whitespace-nowrap shrink-0 focus:outline-none"
           >
             <HelzerXLogoMark className="w-7 h-7" />
             <span className="font-display text-lg font-bold tracking-tight text-white">HelzerX</span>
           </button>
 
-          {/* Zone 2: 4 Single-line Navigation Links */}
+          {/* Zone 2: Clean Single-line Navigation Links */}
           <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-zinc-400">
             <button
-              onClick={() => {
-                setView('storefront');
-                setTimeout(() => document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' }), 50);
-              }}
+              onClick={() => scrollToSection('catalog')}
               className={`hover:text-white transition-colors whitespace-nowrap shrink-0 ${view === 'storefront' ? 'text-white' : ''}`}
             >
               Services
             </button>
             <button
-              onClick={() => {
-                setView('storefront');
-                setTimeout(() => document.getElementById('checkout')?.scrollIntoView({ behavior: 'smooth' }), 50);
-              }}
+              onClick={() => scrollToSection('checkout')}
               className="hover:text-white transition-colors whitespace-nowrap shrink-0"
             >
-              Checkout
+              Order
             </button>
             <button
               onClick={() => {
-                if (!user) setAuthModalMode('login');
-                else setView('customer');
+                if (!user) navigate('auth', 'login');
+                else navigate('customer');
               }}
               className={`hover:text-white transition-colors whitespace-nowrap shrink-0 ${view === 'customer' ? 'text-orange-400' : ''}`}
             >
               Customer Portal
             </button>
+            {!user && (
+              <button
+                onClick={() => navigate('auth', 'register')}
+                className={`hover:text-white transition-colors whitespace-nowrap shrink-0 ${
+                  view === 'auth' && authMode === 'register' ? 'text-orange-400' : ''
+                }`}
+              >
+                Create Account
+              </button>
+            )}
             {isAdmin && (
               <button
-                onClick={() => setView('admin')}
+                onClick={() => navigate('admin')}
                 className={`hover:text-white transition-colors whitespace-nowrap shrink-0 ${view === 'admin' ? 'text-orange-400' : ''}`}
               >
                 Admin Console
@@ -179,7 +332,7 @@ export default function App() {
             )}
           </nav>
 
-          {/* Zone 3: 1 Primary Action */}
+          {/* Zone 3: Primary Action */}
           <div className="flex items-center gap-3 shrink-0">
             {user ? (
               <button
@@ -190,7 +343,7 @@ export default function App() {
               </button>
             ) : (
               <button
-                onClick={() => setAuthModalMode('login')}
+                onClick={() => navigate('auth', 'login')}
                 className="px-4 py-2 text-xs font-semibold rounded-lg bg-orange-600 hover:bg-orange-500 text-white transition-colors whitespace-nowrap shrink-0"
               >
                 Sign In
@@ -207,311 +360,486 @@ export default function App() {
         </div>
 
         {/* Mobile Drawer */}
-        {mobileMenuOpen && (
-          <div className="md:hidden border-t border-white/10 bg-[#0D0D11] px-6 py-4 space-y-2 text-sm">
-            <button
-              onClick={() => {
-                setView('storefront');
-                setMobileMenuOpen(false);
-              }}
-              className="block w-full text-left py-2 text-zinc-300"
+        <AnimatePresence>
+          {mobileMenuOpen && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="md:hidden overflow-hidden border-t border-white/10 bg-[#0D0D11] px-6 py-4 space-y-2 text-sm"
             >
-              Services &amp; Checkout
-            </button>
-            <button
-              onClick={() => {
-                setMobileMenuOpen(false);
-                if (!user) setAuthModalMode('login');
-                else setView('customer');
-              }}
-              className="block w-full text-left py-2 text-zinc-300"
-            >
-              Customer Portal
-            </button>
-            {isAdmin && (
               <button
                 onClick={() => {
                   setMobileMenuOpen(false);
-                  setView('admin');
+                  navigate('storefront');
                 }}
-                className="block w-full text-left py-2 text-orange-400"
+                className="block w-full text-left py-2 text-zinc-300"
               >
-                Admin Console
+                Services &amp; Order
               </button>
-            )}
-          </div>
-        )}
+              {!user && (
+                <>
+                  <button
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      navigate('auth', 'login');
+                    }}
+                    className="block w-full text-left py-2 text-zinc-300"
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      navigate('auth', 'register');
+                    }}
+                    className="block w-full text-left py-2 text-orange-400 font-medium"
+                  >
+                    Create Account
+                  </button>
+                </>
+              )}
+              {user && (
+                <button
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    navigate('customer');
+                  }}
+                  className="block w-full text-left py-2 text-zinc-300"
+                >
+                  Customer Portal
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    navigate('admin');
+                  }}
+                  className="block w-full text-left py-2 text-orange-400"
+                >
+                  Admin Console
+                </button>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </header>
 
       {/* Toast Feedback */}
-      {toast && (
-        <div className="no-print fixed bottom-5 right-5 z-50 max-w-sm bg-[#121217] border border-white/15 rounded-xl px-4 py-3 shadow-2xl flex items-center gap-3 text-xs">
-          {toast.type === 'success' ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-          ) : (
-            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-          )}
-          <span className="text-zinc-200">{toast.msg}</span>
-        </div>
-      )}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: 18, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.96 }}
+            className="no-print fixed bottom-5 right-5 z-50 max-w-sm bg-[#121217] border border-white/15 rounded-xl px-4 py-3 shadow-2xl flex items-center gap-3 text-xs"
+          >
+            {toast.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            )}
+            <span className="text-zinc-200">{toast.msg}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* MAIN CONTENT SWITCHER */}
+      {/* MAIN VIEW SWITCHER WITH SMOOTH TRANSITIONS */}
       <div className="flex-1">
-        {view === 'storefront' && (
-          <div>
-            {/* HERO SECTION — Obsidian Architectural Grid + Molten Copper Lighting + 3D Prism */}
-            <section className="relative overflow-hidden hx-grid-bg border-b border-white/10">
-              <div className="absolute inset-0 hx-molten-glow pointer-events-none" />
-              <div className="relative max-w-7xl mx-auto px-6 py-20 md:py-28 grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
-                <div className="lg:col-span-7 space-y-6">
-                  <div className="text-xs font-medium text-orange-400 tracking-wide">
-                    HelzerX Technologies · customers.helzerx.cyou
-                  </div>
-                  <h1
-                    className="font-display text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-white leading-[1.06]"
-                    style={{ textWrap: 'balance' }}
+        <AnimatePresence mode="wait">
+          {view === 'storefront' && (
+            <motion.div
+              key="view-storefront"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.28 }}
+            >
+              {/* HERO SECTION — Obsidian Architectural Grid + Monumental Watermark + Interactive 3D Sculpture */}
+              <section className="relative overflow-hidden hx-grid-bg border-b border-white/10">
+                <div className="absolute inset-0 hx-molten-glow pointer-events-none" />
+
+                <div className="relative max-w-7xl mx-auto px-6 py-16 md:py-24 grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center">
+                  <motion.div
+                    initial={{ opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.45, ease: 'easeOut' }}
+                    className="lg:col-span-6 space-y-6 relative z-10"
                   >
-                    Enterprise Infrastructure, Orders &amp; Automated Billing
-                  </h1>
-                  <p className="text-base md:text-lg text-zinc-400 max-w-2xl leading-relaxed">
-                    Provision dedicated compute clusters, sovereign AI systems, and zero-trust perimeter defense with instant PDF invoicing, verified settlement tracking, and 24/7 engineering support.
-                  </p>
-                  <div className="flex flex-wrap items-center gap-4 pt-2">
-                    <button
-                      onClick={() => document.getElementById('checkout')?.scrollIntoView({ behavior: 'smooth' })}
-                      className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-sm font-semibold transition-colors"
+                    <div className="text-xs font-medium text-orange-400 tracking-wide">
+                      HelzerX Technologies · Enterprise Client Portal
+                    </div>
+                    <h1
+                      className="font-display text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-white leading-[1.06]"
+                      style={{ textWrap: 'balance' }}
                     >
-                      Configure &amp; Order
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={handleOpenPortal}
-                      className="inline-flex items-center gap-2 px-6 py-3 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-white text-sm font-medium transition-colors"
+                      Enterprise Infrastructure, Orders &amp; Automated Billing
+                    </h1>
+                    <p className="text-base md:text-lg text-zinc-400 max-w-xl leading-relaxed">
+                      Provision dedicated compute clusters, private AI systems, and perimeter security with instant PDF invoicing, verified settlement tracking, and round-the-clock engineering support.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-3.5 pt-2">
+                      <button
+                        onClick={() => scrollToSection('checkout')}
+                        className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-sm font-semibold transition-all duration-200 shadow-lg shadow-orange-950/40"
+                      >
+                        Configure &amp; Order
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                      {user ? (
+                        <button
+                          onClick={handleOpenPortal}
+                          className="inline-flex items-center gap-2 px-6 py-3 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-white text-sm font-medium transition-colors"
+                        >
+                          Open My Dashboard
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => navigate('auth', 'register')}
+                            className="inline-flex items-center gap-2 px-5 py-3 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-white text-sm font-medium transition-colors"
+                          >
+                            Create Account
+                          </button>
+                          <button
+                            onClick={() => navigate('auth', 'login')}
+                            className="inline-flex items-center gap-2 px-4 py-3 text-sm font-medium text-zinc-300 hover:text-white transition-colors"
+                          >
+                            Sign In
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </motion.div>
+
+                  {/* Interactive 3D Metallic Sculpture Stage matching Reference 1 */}
+                  <div className="lg:col-span-6 relative min-h-[360px] md:min-h-[430px] flex items-center justify-center">
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none select-none absolute inset-x-0 top-1/2 -translate-y-1/2 text-center font-display font-extrabold text-[5.25rem] sm:text-[7.5rem] lg:text-[8.25rem] leading-none tracking-tight hx-hero-wordmark"
                     >
-                      {user ? 'Open My Dashboard' : 'Customer Sign In'}
-                    </button>
+                      HELZERX
+                    </div>
+                    <div className="relative z-10 w-full h-[360px] md:h-[430px]">
+                      <ThreePrismCanvas interactive variant="hero" />
+                    </div>
                   </div>
                 </div>
+              </section>
 
-                <div className="lg:col-span-5">
-                  <HeroSculpturalPrism />
-                </div>
-              </div>
-            </section>
+              {/* 4-CARD 3D ARCHITECTURAL CAPABILITY STRIP (Matching Reference 1 sculptures + glowing amber featured card) */}
+              <section className="max-w-7xl mx-auto px-6 py-16">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                  <Tilt3DCard className="bg-[#0D0D11] border border-white/10 rounded-2xl p-6">
+                    <div className="flex flex-col justify-between h-full space-y-5">
+                      <Sculptural3DArrow className="w-16 h-16" />
+                      <div className="space-y-2">
+                        <h3 className="font-display text-base font-bold text-white">Dedicated Provisioning</h3>
+                        <p className="text-xs text-zinc-400 leading-relaxed">
+                          Follow every order smoothly from initial submission through payment verification to live service activation.
+                        </p>
+                      </div>
+                    </div>
+                  </Tilt3DCard>
 
-            {/* 4-CARD ARCHITECTURAL CAPABILITY STRIP (Matching dark + molten amber featured card reference) */}
-            <section className="max-w-7xl mx-auto px-6 py-16">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-[#0D0D11] border border-white/10 rounded-2xl p-6 space-y-3">
-                  <Server className="w-6 h-6 text-orange-400" />
-                  <h3 className="font-display text-base font-bold text-white">01. Dedicated Provisioning</h3>
-                  <p className="text-xs text-zinc-400 leading-relaxed">
-                    Every order tracks live from submission through payment verification to cluster activation.
-                  </p>
-                </div>
-                <div className="bg-[#0D0D11] border border-white/10 rounded-2xl p-6 space-y-3">
-                  <FileText className="w-6 h-6 text-orange-400" />
-                  <h3 className="font-display text-base font-bold text-white">02. Instant PDF Invoices</h3>
-                  <p className="text-xs text-zinc-400 leading-relaxed">
-                    Unique sequential invoice numbers (`HX-INV-2026`) generated atomically with automatic PDF downloads.
-                  </p>
-                </div>
-                <div className="bg-[#0D0D11] border border-white/10 rounded-2xl p-6 space-y-3">
-                  <Lock className="w-6 h-6 text-orange-400" />
-                  <h3 className="font-display text-base font-bold text-white">03. Verified Settlement</h3>
-                  <p className="text-xs text-zinc-400 leading-relaxed">
-                    Bank transfer receipts and Stripe webhooks verified securely server-side before marking Paid.
-                  </p>
-                </div>
-                <div className="hx-featured-card rounded-2xl p-6 space-y-3 text-white">
-                  <ShieldCheck className="w-6 h-6 text-white" />
-                  <h3 className="font-display text-base font-bold">04. Zero-Trust Isolation</h3>
-                  <p className="text-xs text-orange-100/90 leading-relaxed">
-                    Role-based access control, RFC 6238 2FA, session revocation, and strict customer data privacy.
-                  </p>
-                </div>
-              </div>
-            </section>
+                  <Tilt3DCard className="bg-[#0D0D11] border border-white/10 rounded-2xl p-6">
+                    <div className="flex flex-col justify-between h-full space-y-5">
+                      <Sculptural3DBust className="w-16 h-16" />
+                      <div className="space-y-2">
+                        <h3 className="font-display text-base font-bold text-white">Instant PDF Billing</h3>
+                        <p className="text-xs text-zinc-400 leading-relaxed">
+                          Unique numbered invoices are issued the moment you order, complete with automatic printable PDF downloads.
+                        </p>
+                      </div>
+                    </div>
+                  </Tilt3DCard>
 
-            {/* SERVICE CATALOG & PACKAGES */}
-            <section id="catalog" className="max-w-7xl mx-auto px-6 py-12 border-t border-white/10">
-              <div className="flex flex-wrap items-end justify-between gap-6 mb-10">
-                <div>
-                  <div className="text-xs font-medium text-orange-400 mb-2">Service &amp; Infrastructure Catalog</div>
-                  <h2 className="font-display text-3xl font-bold text-white tracking-tight">Select Your Enterprise Stack</h2>
-                </div>
-                <div className="flex flex-wrap gap-1 p-1 bg-[#0D0D11] border border-white/10 rounded-xl">
-                  <button
-                    onClick={() => setActiveCategory('ALL')}
-                    className={`px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
-                      activeCategory === 'ALL' ? 'bg-orange-600 text-white' : 'text-zinc-400 hover:text-white'
-                    }`}
+                  <Tilt3DCard className="bg-[#0D0D11] border border-white/10 rounded-2xl p-6">
+                    <div className="flex flex-col justify-between h-full space-y-5">
+                      <Sculptural3DGear className="w-16 h-16" />
+                      <div className="space-y-2">
+                        <h3 className="font-display text-base font-bold text-white">Verified Payment Settlement</h3>
+                        <p className="text-xs text-zinc-400 leading-relaxed">
+                          Bank wire receipts and card payments are carefully verified before any invoice transitions to Paid.
+                        </p>
+                      </div>
+                    </div>
+                  </Tilt3DCard>
+
+                  <Tilt3DCard
+                    className="hx-featured-card rounded-2xl p-6 text-white border border-orange-400/30"
+                    glowColor="rgba(255, 255, 255, 0.22)"
                   >
-                    All Solutions
-                  </button>
-                  {categories.map((cat) => (
+                    <div className="flex flex-col justify-between h-full space-y-5">
+                      <Sculptural3DCheck className="w-16 h-16" />
+                      <div className="space-y-2">
+                        <h3 className="font-display text-base font-bold">Private Client Protection</h3>
+                        <p className="text-xs text-orange-100/90 leading-relaxed">
+                          Role-isolated accounts, authenticator app verification, and strict privacy keep every client workspace protected.
+                        </p>
+                      </div>
+                    </div>
+                  </Tilt3DCard>
+                </div>
+              </section>
+
+              {/* SERVICE CATALOG & PACKAGES */}
+              <section id="catalog" className="max-w-7xl mx-auto px-6 py-12 border-t border-white/10">
+                <div className="flex flex-wrap items-end justify-between gap-6 mb-10">
+                  <div>
+                    <div className="text-xs font-medium text-orange-400 mb-2">Service &amp; Infrastructure Catalog</div>
+                    <h2 className="font-display text-3xl font-bold text-white tracking-tight">Select Your Enterprise Stack</h2>
+                  </div>
+                  <div className="flex flex-wrap gap-1 p-1 bg-[#0D0D11] border border-white/10 rounded-xl">
                     <button
-                      key={cat.id}
-                      onClick={() => setActiveCategory(cat.id)}
+                      onClick={() => setActiveCategory('ALL')}
                       className={`px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
-                        activeCategory === cat.id ? 'bg-orange-600 text-white' : 'text-zinc-400 hover:text-white'
+                        activeCategory === 'ALL' ? 'bg-orange-600 text-white' : 'text-zinc-400 hover:text-white'
                       }`}
                     >
-                      {cat.name}
+                      All Solutions
                     </button>
+                    {categories.map((cat) => (
+                      <button
+                        key={cat.id}
+                        onClick={() => setActiveCategory(cat.id)}
+                        className={`px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+                          activeCategory === cat.id ? 'bg-orange-600 text-white' : 'text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        {cat.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {filteredProducts.map((product) => (
+                    <Tilt3DCard
+                      key={product.id}
+                      maxTilt={4}
+                      className={`rounded-2xl p-6 md:p-8 border ${
+                        product.featured
+                          ? 'bg-gradient-to-b from-[#170C07] to-[#0D0D11] border-orange-500/35'
+                          : 'bg-[#0D0D11] border-white/10'
+                      }`}
+                    >
+                      <div className="flex flex-col justify-between h-full space-y-6">
+                        <div className="space-y-4">
+                          <div>
+                            <div className="text-xs text-orange-400 font-medium">
+                              {categories.find((c) => c.id === product.category_id)?.name || 'Enterprise Service'}
+                            </div>
+                            <h3 className="font-display text-2xl font-bold text-white mt-1">{product.name}</h3>
+                            <p className="text-sm text-zinc-400 mt-1.5 leading-relaxed">{product.description}</p>
+                          </div>
+                          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-zinc-300 pt-2">
+                            {product.features.map((feat, idx) => (
+                              <li key={idx} className="flex items-center gap-2">
+                                <span className="text-orange-400 font-mono">·</span>
+                                <span>{feat}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        <div className="space-y-2.5 pt-4 border-t border-white/10">
+                          <div className="text-xs font-semibold text-zinc-500 tracking-wide">Available Packages</div>
+                          {product.packages.map((pkg) => {
+                            const isSelected = selectedProductId === product.id && selectedPackageId === pkg.id;
+                            return (
+                              <div
+                                key={pkg.id}
+                                className={`flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl border transition-colors ${
+                                  isSelected
+                                    ? 'border-orange-500 bg-orange-500/10'
+                                    : 'border-white/10 bg-[#070709] hover:border-white/20'
+                                }`}
+                              >
+                                <div>
+                                  <div className="text-sm font-semibold text-white">{pkg.name}</div>
+                                  <div className="text-xs text-zinc-500 capitalize">
+                                    {pkg.billing_cycle.replace('_', ' ')} · {pkg.duration_days} days
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <span className="font-mono text-base font-bold text-white tabular-nums">
+                                    {formatCurrency(pkg.price_cents, pkg.currency)}
+                                  </span>
+                                  <button
+                                    onClick={() => handleSelectPackageAndScroll(product.id, pkg.id)}
+                                    className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-orange-600 hover:bg-orange-500 text-white whitespace-nowrap transition-colors"
+                                  >
+                                    Order Tier
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </Tilt3DCard>
                   ))}
                 </div>
-              </div>
+              </section>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {filteredProducts.map((product) => (
-                  <div
-                    key={product.id}
-                    className={`rounded-2xl p-6 md:p-8 border flex flex-col justify-between space-y-6 ${
-                      product.featured
-                        ? 'bg-gradient-to-b from-[#170C07] to-[#0D0D11] border-orange-500/35'
-                        : 'bg-[#0D0D11] border-white/10'
-                    }`}
-                  >
-                    <div className="space-y-4">
-                      <div>
-                        <div className="text-xs text-orange-400 font-medium">
-                          {categories.find((c) => c.id === product.category_id)?.name || 'Enterprise Service'}
-                        </div>
-                        <h3 className="font-display text-2xl font-bold text-white mt-1">{product.name}</h3>
-                        <p className="text-sm text-zinc-400 mt-1.5 leading-relaxed">{product.description}</p>
-                      </div>
-                      <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-zinc-300 pt-2">
-                        {product.features.map((feat, idx) => (
-                          <li key={idx} className="flex items-center gap-2">
-                            <span className="text-orange-400 font-mono">·</span>
-                            <span>{feat}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+              {/* CHECKOUT & REGISTRATION */}
+              <CheckoutSection
+                products={products}
+                user={user}
+                settings={settings}
+                selectedProductId={selectedProductId}
+                selectedPackageId={selectedPackageId}
+                onSelectProductPackage={(pid, pkgId) => {
+                  setSelectedProductId(pid);
+                  setSelectedPackageId(pkgId);
+                }}
+                onOrderCompleted={async (result) => {
+                  setUser(result.user);
+                  showToast('success', `Order ${result.order_number} submitted! Invoice ${result.invoice_number} PDF downloaded.`);
+                  try {
+                    const invRes = await apiFetch<{ invoice: Invoice }>(`/api/invoices/${result.invoice_id}`);
+                    setActiveInvoice(invRes.invoice);
+                  } catch {
+                    // fallback
+                  }
+                  navigate('customer');
+                }}
+                onNotify={showToast}
+              />
+            </motion.div>
+          )}
 
-                    <div className="space-y-2.5 pt-4 border-t border-white/10">
-                      <div className="text-xs font-semibold text-zinc-500">AVAILABLE PACKAGES</div>
-                      {product.packages.map((pkg) => {
-                        const isSelected = selectedProductId === product.id && selectedPackageId === pkg.id;
-                        return (
-                          <div
-                            key={pkg.id}
-                            className={`flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl border transition-colors ${
-                              isSelected
-                                ? 'border-orange-500 bg-orange-500/10'
-                                : 'border-white/10 bg-[#070709] hover:border-white/20'
-                            }`}
-                          >
-                            <div>
-                              <div className="text-sm font-semibold text-white">{pkg.name}</div>
-                              <div className="text-xs text-zinc-500 capitalize">
-                                {pkg.billing_cycle.replace('_', ' ')} · {pkg.duration_days} days
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <span className="font-mono text-base font-bold text-white tabular-nums">
-                                {formatCurrency(pkg.price_cents, pkg.currency)}
-                              </span>
-                              <button
-                                onClick={() => handleSelectPackageAndScroll(product.id, pkg.id)}
-                                className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-orange-600 hover:bg-orange-500 text-white whitespace-nowrap"
-                              >
-                                Order Tier
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            {/* CHECKOUT & REGISTRATION */}
-            <CheckoutSection
-              products={products}
-              user={user}
-              settings={settings}
-              selectedProductId={selectedProductId}
-              selectedPackageId={selectedPackageId}
-              onSelectProductPackage={(pid, pkgId) => {
-                setSelectedProductId(pid);
-                setSelectedPackageId(pkgId);
-              }}
-              onOrderCompleted={async (result) => {
-                setUser(result.user);
-                showToast('success', `Order ${result.order_number} submitted! Invoice ${result.invoice_number} PDF downloaded.`);
-                try {
-                  const invRes = await apiFetch<{ invoice: Invoice }>(`/api/invoices/${result.invoice_id}`);
-                  setActiveInvoice(invRes.invoice);
-                } catch {
-                  // fallback
+          {view === 'auth' && (
+            <AuthPage
+              key="view-auth"
+              mode={authMode}
+              needsAdminSetup={needsAdminSetup}
+              onModeChange={(nextMode) => navigate('auth', nextMode)}
+              onBackToStorefront={() => navigate('storefront')}
+              onSuccess={(loggedInUser, msg) => {
+                setUser(loggedInUser);
+                if (loggedInUser.role === 'super_admin' || loggedInUser.role === 'admin') {
+                  setNeedsAdminSetup(false);
                 }
-                setView('customer');
+                showToast('success', msg);
+                if (loggedInUser.role === 'admin' || loggedInUser.role === 'super_admin') {
+                  navigate('admin');
+                } else {
+                  navigate('customer');
+                }
               }}
-              onNotify={showToast}
             />
-          </div>
-        )}
+          )}
 
-        {view === 'customer' && user && (
-          <CustomerDashboard
-            user={user}
-            settings={settings}
-            onUserUpdated={setUser}
-            onOpenInvoice={setActiveInvoice}
-            onNavigateToOrder={() => {
-              setView('storefront');
-              setTimeout(() => document.getElementById('checkout')?.scrollIntoView({ behavior: 'smooth' }), 60);
-            }}
-            onLogout={handleLogout}
-            onNotify={showToast}
-          />
-        )}
+          {view === 'customer' && user && (
+            <motion.div
+              key="view-customer"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.25 }}
+            >
+              <CustomerDashboard
+                user={user}
+                settings={settings}
+                onUserUpdated={setUser}
+                onOpenInvoice={setActiveInvoice}
+                onNavigateToOrder={() => scrollToSection('checkout')}
+                onLogout={handleLogout}
+                onNotify={showToast}
+              />
+            </motion.div>
+          )}
 
-        {view === 'admin' && isAdmin && user && (
-          <AdminDashboard
-            user={user}
-            onOpenInvoice={setActiveInvoice}
-            onCatalogChanged={loadCatalog}
-            onLogout={handleLogout}
-            onNotify={showToast}
-          />
-        )}
+          {view === 'admin' && isAdmin && user && (
+            <motion.div
+              key="view-admin"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.25 }}
+            >
+              <AdminDashboard
+                user={user}
+                onOpenInvoice={setActiveInvoice}
+                onCatalogChanged={loadCatalog}
+                onLogout={handleLogout}
+                onNotify={showToast}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Quiet Enterprise Footer */}
       <footer className="no-print border-t border-white/10 bg-[#070709] py-8 px-6">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-500">
-          <div>HelzerX Technologies Inc. · customers.helzerx.cyou · Billing, Orders &amp; Support Portal</div>
+          <div>HelzerX Technologies Inc. · Enterprise Billing, Orders &amp; Support Portal</div>
           <div className="flex items-center gap-5">
-            <button onClick={() => setView('storefront')} className="hover:text-zinc-300">Catalog</button>
-            <button onClick={handleOpenPortal} className="hover:text-zinc-300">Customer Portal</button>
-            <a href="mailto:billing@helzerx.cyou" className="hover:text-zinc-300">billing@helzerx.cyou</a>
+            <button onClick={() => navigate('storefront')} className="hover:text-zinc-300 transition-colors">Services</button>
+            {!user && (
+              <>
+                <button onClick={() => navigate('auth', 'login')} className="hover:text-zinc-300 transition-colors">Sign In</button>
+                <button onClick={() => navigate('auth', 'register')} className="hover:text-zinc-300 transition-colors">Create Account</button>
+              </>
+            )}
+            {user && (
+              <button onClick={handleOpenPortal} className="hover:text-zinc-300 transition-colors">Customer Portal</button>
+            )}
+            <a href="mailto:billing@helzerx.cyou" className="hover:text-zinc-300 transition-colors">billing@helzerx.cyou</a>
           </div>
         </div>
       </footer>
 
-      {/* Auth Modal */}
-      {authModalMode && (
-        <AuthModal
-          initialMode={authModalMode}
-          onClose={() => setAuthModalMode(null)}
-          onSuccess={(loggedInUser, msg) => {
-            setUser(loggedInUser);
-            setAuthModalMode(null);
-            showToast('success', msg);
-            if (loggedInUser.role === 'admin' || loggedInUser.role === 'super_admin') {
-              setView('admin');
-            } else {
-              setView('customer');
-            }
-          }}
-        />
-      )}
+      {/* 30-Minute Idle Timeout Countdown Modal */}
+      <AnimatePresence>
+        {idleWarningSeconds !== null && user && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 10 }}
+              className="w-full max-w-md bg-[#0D0D11] border border-orange-500/40 rounded-2xl p-6 space-y-4 shadow-2xl"
+            >
+              <div className="flex items-center gap-2.5 text-orange-400 font-display font-bold text-lg">
+                <Lock className="w-5 h-5" />
+                Session Inactivity Warning
+              </div>
+              <p className="text-xs text-zinc-300 leading-relaxed">
+                For account security, your authenticated session will automatically sign out in{' '}
+                <span className="font-mono font-bold text-orange-400 tabular-nums">{idleWarningSeconds}s</span> due to inactivity.
+              </p>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => handleLogout()}
+                  className="px-3.5 py-2 text-xs rounded-lg border border-white/15 text-zinc-300 hover:bg-white/5"
+                >
+                  Sign Out Now
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    lastActivityRef.current = Date.now();
+                    setIdleWarningSeconds(null);
+                    await loadSession();
+                  }}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-orange-600 hover:bg-orange-500 text-white"
+                >
+                  Stay Signed In
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Online & Printable Invoice Viewer Modal */}
       {activeInvoice && (

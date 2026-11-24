@@ -429,4 +429,74 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    name: 'high_security_hardening_and_demo_purge',
+    up: (db: Database.Database) => {
+      const cols = db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>;
+      const colSet = new Set(cols.map((c) => c.name));
+      if (!colSet.has('failed_login_attempts')) {
+        db.exec('ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0');
+      }
+      if (!colSet.has('locked_until')) {
+        db.exec('ALTER TABLE users ADD COLUMN locked_until TEXT');
+      }
+      if (!colSet.has('verification_expires_at')) {
+        db.exec('ALTER TABLE users ADD COLUMN verification_expires_at TEXT');
+      }
+      if (!colSet.has('two_factor_recovery_codes_json')) {
+        db.exec("ALTER TABLE users ADD COLUMN two_factor_recovery_codes_json TEXT NOT NULL DEFAULT '[]'");
+      }
+      if (!colSet.has('last_login_ip')) {
+        db.exec("ALTER TABLE users ADD COLUMN last_login_ip TEXT NOT NULL DEFAULT ''");
+      }
+      if (!colSet.has('last_login_at')) {
+        db.exec('ALTER TABLE users ADD COLUMN last_login_at TEXT');
+      }
+
+      const sessCols = db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>;
+      const sessSet = new Set(sessCols.map((c) => c.name));
+      if (!sessSet.has('session_fingerprint')) {
+        db.exec("ALTER TABLE sessions ADD COLUMN session_fingerprint TEXT NOT NULL DEFAULT ''");
+      }
+
+      // Remove any previously seeded demo customer/admin/test records & associated artifacts cleanly
+      const targetUsers = db
+        .prepare("SELECT id FROM users WHERE lower(email) IN ('ana.morales@solcraft.mx', 'admin@helzerx.cyou') OR lower(email) LIKE 'elena.%@rostova.io'")
+        .all() as Array<{ id: number }>;
+
+      for (const u of targetUsers) {
+        db.prepare('UPDATE orders SET assigned_admin_id = NULL WHERE assigned_admin_id = ?').run(u.id);
+        db.prepare('UPDATE payments SET reviewed_by = NULL WHERE reviewed_by = ?').run(u.id);
+        db.prepare('UPDATE refund_requests SET reviewed_by = NULL WHERE reviewed_by = ?').run(u.id);
+        db.prepare('UPDATE support_tickets SET assigned_admin_id = NULL WHERE assigned_admin_id = ?').run(u.id);
+        db.prepare('UPDATE order_status_history SET actor_user_id = NULL WHERE actor_user_id = ?').run(u.id);
+        db.prepare('UPDATE activity_logs SET actor_user_id = NULL WHERE actor_user_id = ?').run(u.id);
+        db.prepare('UPDATE activity_logs SET user_id = NULL WHERE user_id = ?').run(u.id);
+
+        db.prepare('DELETE FROM feedback WHERE user_id = ?').run(u.id);
+        db.prepare('DELETE FROM refund_requests WHERE user_id = ?').run(u.id);
+        db.prepare('DELETE FROM transactions WHERE user_id = ?').run(u.id);
+        db.prepare('DELETE FROM payment_receipts WHERE payment_id IN (SELECT id FROM payments WHERE user_id = ?)').run(u.id);
+        db.prepare('DELETE FROM payments WHERE user_id = ?').run(u.id);
+        db.prepare('DELETE FROM services WHERE user_id = ?').run(u.id);
+        db.prepare('DELETE FROM invoice_items WHERE invoice_id IN (SELECT id FROM invoices WHERE user_id = ?)').run(u.id);
+        db.prepare('DELETE FROM invoices WHERE user_id = ?').run(u.id);
+        db.prepare('DELETE FROM order_status_history WHERE order_id IN (SELECT id FROM orders WHERE user_id = ?)').run(u.id);
+        db.prepare('DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE user_id = ?)').run(u.id);
+        db.prepare('DELETE FROM orders WHERE user_id = ?').run(u.id);
+        db.prepare('DELETE FROM ticket_messages WHERE sender_user_id = ? OR ticket_id IN (SELECT id FROM support_tickets WHERE user_id = ?)').run(u.id, u.id);
+        db.prepare('DELETE FROM support_tickets WHERE user_id = ?').run(u.id);
+        db.prepare('DELETE FROM notifications WHERE user_id = ?').run(u.id);
+        db.prepare('DELETE FROM billing_addresses WHERE user_id = ?').run(u.id);
+        db.prepare('DELETE FROM sessions WHERE user_id = ?').run(u.id);
+        db.prepare('DELETE FROM password_resets WHERE user_id = ?').run(u.id);
+        db.prepare('DELETE FROM login_history WHERE user_id = ?').run(u.id);
+        db.prepare('DELETE FROM users WHERE id = ?').run(u.id);
+      }
+
+      db.prepare("DELETE FROM coupons WHERE upper(code) IN ('HELZERX15', 'WELCOME50')").run();
+    },
+  },
 ];
+
